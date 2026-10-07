@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>我是水果王</title>
+  <style>
+    /* ---------- 基础样式：深色背景 + 居中 + 无滚动条 ---------- */
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;                 /* 无滚动条 */
+      background: #0F172A;              /* 深色底色（与游戏背景一致，避免缩放留白突兀） */
+      font-family: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", sans-serif;
+    }
+
+    #battle-bg {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      z-index: 0;
+      pointer-events: none;
+      filter: brightness(0.75) saturate(0.85) blur(1px);
+    }
+
+    #battle-bg-mask {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(0, 0, 0, 0.35);
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    /* 游戏容器：占满视口，canvas 由 Phaser 自动居中（Scale.CENTER_BOTH） */
+    #game-container,
+    #game-root {
+      position: relative;
+      z-index: 1;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #game-root canvas {
+      display: block;
+      background: transparent;
+      /* 缩放时保持像素清晰，不做模糊插值 */
+      image-rendering: -webkit-optimize-contrast;
+    }
+
+    /* ---------- 兜底提示层：仅在 Phaser 未能加载时显示 ---------- */
+    #fallback {
+      position: fixed;
+      inset: 0;
+      display: none;                    /* 默认隐藏，由 main.js 按需打开 */
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #F8FAFC;
+      text-align: center;
+      padding: 24px;
+      line-height: 1.9;
+      font-size: 16px;
+    }
+    #fallback h1 { font-size: 28px; margin: 0 0 12px; color: #FDE047; }
+    #fallback code {
+      background: #1E293B;
+      padding: 2px 8px;
+      border-radius: 4px;
+      color: #7DD3FC;
+      font-family: Consolas, "Courier New", monospace;
+    }
+
+    /* ---------- 作者水印：右下角常驻，不遮挡操作 ---------- */
+    #author-watermark {
+      position: fixed;
+      right: 12px;
+      bottom: 10px;
+      z-index: 99;
+      color: rgba(248, 250, 252, 0.55);
+      font-size: 12px;
+      letter-spacing: 0.5px;
+      pointer-events: none;             /* 不影响游戏点击 */
+      user-select: none;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+    }
+  </style>
+</head>
+<body>
+
+  <div id="battle-bg-mask"></div>
+
+  <!-- 游戏挂载点 -->
+  <div id="game-root"></div>
+
+  <!-- 作者水印 -->
+  <div id="author-watermark">作者：Jason</div>
+
+  <!-- Phaser 加载失败时的友好提示（不抛异常、不白屏） -->
+  <div id="fallback">
+    <h1>我是水果王</h1>
+    <p>Phaser 引擎未能加载，游戏无法启动。</p>
+    <p>请任选一种方式解决：</p>
+    <p>① 确认项目的 <code>lib/phaser.min.js</code> 存在（应为完整项目自带）</p>
+    <p>② 或将 <code>phaser.min.js</code> 下载到 <code>lib/</code> 目录后刷新</p>
+    <p>下载地址：<code>https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js</code></p>
+  </div>
+
+  <noscript>
+    <div style="color:#F8FAFC;text-align:center;padding:40px;">
+      本游戏需要启用 JavaScript 才能运行。
+    </div>
+  </noscript>
+
+  <!-- ============================================================
+       1) Phaser 3 引擎：本地优先
+          项目已内置 lib/phaser.min.js（Phaser 3.80.1，约 1.15MB），
+          双击 index.html 立即开始执行，不再等待网络，断网也能玩。
+       ============================================================ -->
+  <script src="lib/phaser.min.js"></script>
+
+  <!-- ============================================================
+       2) 兜底：万一本地副本丢失，再从 CDN 补一次
+          （正常情况不会触发，因为 lib/phaser.min.js 已随项目提供）
+       ============================================================ -->
+  <script>
+    if (!window.Phaser) {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"><\/script>');
+    }
+  </script>
+
+  <!-- ============================================================
+       3) 数据层：JSON 的运行时镜像
+          原因：浏览器在 file:// 协议下会以 CORS 拦截 fetch/XHR，
+                直接 this.load.json('data/units.json') 会失败。
+          策略：data/*.json 是策划编辑的唯一数据源，
+                data/*.data.js 是它的运行时镜像（内容完全一致），
+                通过 <script> 加载，file:// 下 100% 可用。
+          一致性校验工具：tools/check-data.html（双击打开）
+       ============================================================ -->
+  <script src="data/units.data.js"></script>
+  <script src="data/items.data.js"></script>
+  <script src="data/map.data.js"></script>
+  <script src="data/turn.data.js"></script>
+
+  <!-- ============================================================
+       4) 引擎层（严格按依赖顺序加载，不使用 ES Module）
+          依赖方向：
+            config(常量/事件) → data(配置数据结构) → config(加载器)
+              → systems(事件总线/模块工厂) → registry(注册表)
+              → 各模块工厂 → registerAll(统一注册)
+              → scenes → main
+
+          新增单位/道具/地图模块时，把新文件插到
+          「模块工厂区」与「registerAll」之间即可（模块之间互不依赖，顺序随意）。
+       ============================================================ -->
+  <script src="js/config/gameConfig.js"></script>
+  <script src="js/config/events.js"></script>
+  <script src="js/config/turnStates.js"></script>
+
+  <!-- 数据层：配置数据结构（纯 JS，不依赖 Phaser） -->
+  <script src="js/data/configUtils.js"></script>
+  <script src="js/data/UnitConfig.js"></script>
+  <script src="js/data/ItemConfig.js"></script>
+  <script src="js/data/MapConfig.js"></script>
+
+  <!-- 配置加载器（双通道：http 读 JSON / file:// 读镜像） -->
+  <script src="js/config/ConfigLoader.js"></script>
+
+  <!-- 系统层：事件总线 + 模块工厂 + 回合状态机 -->
+  <script src="js/systems/EventBus.js"></script>
+  <script src="js/systems/SoundSystem.js"></script>
+  <script src="js/systems/ModuleFactory.js"></script>
+  <script src="js/systems/TurnManager.js"></script>
+
+  <!-- 瞄准三件套（第 5 步）：纯 JS 预测 → 控制器 → 渲染器 -->
+  <script src="js/systems/TrajectoryPredictor.js"></script>
+  <script src="js/systems/AimController.js"></script>
+  <script src="js/systems/TrajectoryRenderer.js"></script>
+
+  <!-- 实体基类（必须早于各具体单位模块） -->
+  <script src="js/entities/UnitBase.js"></script>
+
+  <!-- 投掷闭环（第 6 步）：伤害系统 → 投掷物/爆炸实体 → 投掷控制器
+       第 7 步把投掷控制器拆成三件：FuseSystem（引信/落水）+ TurnFlowBridge（回合流转）
+       + ProjectileController（编排），后两者必须先于控制器加载 -->
+  <script src="js/systems/DamageSystem.js"></script>
+  <!-- 第 8 步：落水 / 死亡判定 + 胜负判定（纯逻辑，不依赖 Phaser） -->
+  <script src="js/systems/DeathSystem.js"></script>
+  <script src="js/systems/VictorySystem.js"></script>
+  <script src="js/entities/Projectile.js"></script>
+  <script src="js/entities/Explosion.js"></script>
+  <script src="js/systems/FuseSystem.js"></script>
+  <script src="js/systems/TurnFlowBridge.js"></script>
+  <script src="js/systems/ProjectileController.js"></script>
+
+  <!-- 障碍物（第 7 步）：实体 + 注册表（障碍物与平台共用同一条碰撞路径） -->
+  <script src="js/entities/Obstacle.js"></script>
+  <!-- 击退/主动移动的弹性碰撞（第 7.10 步）：撞木箱 / 撞墙按物理弹回 -->
+  <script src="js/systems/KnockbackPhysics.js"></script>
+  <script src="js/systems/ObstacleRegistry.js"></script>
+  <!-- 道具冷却（第 7.8 步）：按阵营记录「水果箱还有几个自己的行动回合不能用」 -->
+  <script src="js/systems/ItemCooldown.js"></script>
+
+  <!-- 放置模式（第 7.5 步）：水果箱改为点击放置。
+       PlacementController 依赖 ObstacleRegistry 的碰撞世界，因此放在它之后；
+       视觉层 PlacementPreview 与 ItemBar 一起放在 UI 区（见下方）。 -->
+  <script src="js/systems/PlacementController.js"></script>
+
+  <!-- 单位主动移动（第 8.5 步）：
+       MoveController 依赖 TrajectoryPredictor 的积分原语与 KnockbackPhysics 的弹性碰撞，
+       因此放在两者之后；轨迹渲染器紧随其后（逻辑 → 表现）。 -->
+  <script src="js/systems/MoveController.js"></script>
+  <script src="js/systems/MoveRenderer.js"></script>
+
+  <!-- 敌方 AI（第 9 步）：AIPlanner（纯逻辑：候选搜索 + 评分）先于 AIController（决策主控）
+       AIController 只调用既有系统入口（投掷 / 放置 / 移动），不另开一条物理链路 -->
+  <script src="js/systems/AIPlanner.js"></script>
+  <script src="js/systems/AIController.js"></script>
+  <script src="js/systems/AIStats.js"></script>
+
+  <!-- 单位生成与选择系统（第 4 步） -->
+  <script src="js/systems/UnitSpawner.js"></script>
+  <script src="js/systems/UnitSelector.js"></script>
+
+  <!-- 注册表层 -->
+  <script src="js/registry/itemRegistry.js"></script>
+  <script src="js/registry/unitRegistry.js"></script>
+  <script src="js/registry/mapRegistry.js"></script>
+
+  <!-- 模块工厂区（第 2 步：占位骨架，只满足接口契约） -->
+  <script src="js/entities/units/FruitKing.js"></script>
+  <script src="js/entities/units/AppleGuard.js"></script>
+  <script src="js/entities/units/LemonGeneral.js"></script>
+  <script src="js/entities/units/GrapeSoldier.js"></script>
+  <script src="js/entities/items/CherryBomb.js"></script>
+  <script src="js/entities/items/WatermelonBomb.js"></script>
+  <script src="js/entities/items/FruitCrate.js"></script>
+  <script src="js/systems/maps/FruitKingArena.js"></script>
+
+  <!-- 统一注册入口（新增模块时只需改这一个文件 + 上面加一行） -->
+  <script src="js/registry/registerAll.js"></script>
+
+  <!-- 道具栏 UI（第 7 步；第 8.6 步起含第 4 格「移动」，不再有独立模式条） -->
+  <script src="js/ui/ItemBar.js"></script>
+  <script src="js/ui/TimerDisplay.js"></script>
+  <script src="js/ui/AimIndicator.js"></script>
+  <script src="js/ui/HUD.js"></script>
+
+  <!-- 放置预览 UI（第 7.5 步）：半透明木箱轮廓 / 绿红合法性 / ✗ / 鼠标光标 -->
+  <script src="js/ui/PlacementPreview.js"></script>
+
+  <!-- 死亡占位动画（第 8 步）：落水半透明蓝缩小 200ms / 血量归零闪红两次 400ms -->
+  <script src="js/ui/DeathEffect.js"></script>
+
+  <!-- 胜负结算界面（第 8 步）：半透明黑覆盖层 + 结果文字 + 回合数 + 「再来一局」 -->
+  <script src="js/ui/ResultPanel.js"></script>
+
+  <!-- 场景层 -->
+  <script src="js/scenes/BootScene.js"></script>
+  <script src="js/scenes/BattleScene.js"></script>
+  <script src="js/scenes/ResultScene.js"></script>
+
+  <!-- 入口放最后：此时上面所有模块已挂载到 window.FK -->
+  <script src="js/main.js"></script>
+
+</body>
+</html>

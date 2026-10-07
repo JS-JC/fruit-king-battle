@@ -1,0 +1,102 @@
+/**
+ * ============================================================
+ * items.data.js —— data/items.json 的运行时镜像
+ * ============================================================
+ * 【本文件由 tools/sync-data.js 自动生成，请勿手工编辑】
+ *
+ * 用途：道具数值配置。
+ *   浏览器在 file:// 协议（双击 index.html）下会以 CORS 拦截
+ *   fetch / XMLHttpRequest，导致 Phaser 的 this.load.json() 必然失败；
+ *   而 <script src> 在 file:// 下不受限制，因此把同一份 JSON
+ *   包成 JS 对象，通过 <script> 加载即可。
+ *
+ * 修改流程：
+ *   1) 编辑 data/items.json（唯一策划源）
+ *   2) 执行 node tools/sync-data.js  重新生成本文件
+ *   3) 双击 tools/check-data.html 确认逐字段一致
+ * ============================================================
+ */
+window.FK_DATA = window.FK_DATA || {};
+window.FK_DATA.items = {
+  "version": "0.4.0",
+  "schema": "items",
+  "description": "道具数值配置。第 2 步填充 MVP 示例数据（3 个道具）；第 6 步补齐樱桃炸弹的投掷与爆炸参数并落地投掷闭环；第 7 步补齐 desc 文案与 crateSizeUnits，并让西瓜炸弹引信短于樱桃炸弹；第 7.5 步把水果箱改为点击放置；第 7.6 步把木箱存活时长从 2 个 turn 改为 4 个 turn（放置回合计入，故第 5 个 turn 开始时已消失）；第 7.8 步新增 cooldownTurns（道具冷却回合数，水果箱 = 1：用完后下一个 turn 不可再用，再下一个 turn 恢复）。range 为力度系数（1.0 = 樱桃炸弹基准，满力 45° 射程 20.0 单位）。",
+  "fields": {
+    "id": "string 必填。唯一标识，必须与 js/registry/registerAll.js 中注册的 id 一致",
+    "name": "string 必填。显示名（中文）",
+    "type": "string 必填。道具类型：'explosive'（爆炸类，落地即爆）或 'obstacle'（放置类，落地生成障碍）",
+    "range": "number 必填。射程力度系数，1.0 为基准（樱桃炸弹），越小射程越短",
+    "damage": "number 必填。中心伤害，无伤害道具填 0",
+    "radius": "number 必填。爆炸半径（地图单位 u），无爆炸道具填 0",
+    "knockback": "number 必填。击退初速度（px/s），无击退道具填 0",
+    "duration": "number 必填。存活 turn 数，即时生效类填 0。放置类（type='obstacle'，如水果箱）：放置回合也计入，每回合结束扣 1，因此 4 表示「放置后存活 4 个 turn（Turn 1 放 → Turn 1/2/3/4 在 → Turn 5 消失）」",
+    "innerRadiusUnits": "number 可选（第 6 步）。满伤内圈半径（地图单位 u），≤ 该距离内结算 100% 伤害；缺省 0",
+    "edgeDamageRatio": "number 可选（第 6 步）。爆炸半径边缘处的伤害系数（0～1），缺省 1 表示不衰减",
+    "projectileRadiusUnits": "number 可选（第 6 步）。投掷物视半径（地图单位 u），缺省 0.3",
+    "fuseOnHitMs": "number 可选（第 6 步）。引爆延迟（毫秒），碰撞后到爆炸之间的引信时长，缺省 50；放置类道具填 0 表示落地即生效（无引信）",
+    "explodeAnimMs": "number 可选（第 6 步）。爆炸演出时长（毫秒），圆环从 0 放大到 radius，缺省 300",
+    "crateSizeUnits": "number 可选（第 7 步）。障碍物边长（地图单位 u），仅 type='obstacle' 使用，缺省 1.5",
+    "cooldownTurns": "number 可选（第 7.8 步）。道具冷却回合数，缺省 0 = 无冷却。语义：在第 N 个 turn 使用后，第 N+1 个 turn 不可再用，第 N+2 个 turn 恢复可用（水果箱 = 1）",
+    "desc": "string 可选（第 7 步）。道具栏悬停提示的简短说明（纯展示文本）",
+    "sprite": "string 必填。纹理 key，遵循 assets/sprites/items 命名规范"
+  },
+  "items": [
+    {
+      "id": "cherry_bomb",
+      "name": "樱桃炸弹",
+      "desc": "基准炸弹 · 射程最远 · 伤害 35 · 半径 2.5u",
+      "type": "explosive",
+      "range": 1,
+      "damage": 35,
+      "radius": 2.5,
+      "knockback": 260,
+      "duration": 0,
+      "cooldownTurns": 0,
+      "innerRadiusUnits": 0.8,
+      "edgeDamageRatio": 0.4,
+      "projectileRadiusUnits": 0.25,
+      "fuseOnHitMs": 50,
+      "explodeAnimMs": 350,
+      "crateSizeUnits": 1.5,
+      "sprite": "item_cherrybomb_projectile_32"
+    },
+    {
+      "id": "watermelon_bomb",
+      "name": "西瓜炸弹",
+      "desc": "重炮 · 伤害 60 · 半径 3.5u · 强击退，射程偏短",
+      "type": "explosive",
+      "range": 0.72,
+      "damage": 60,
+      "radius": 3.5,
+      "knockback": 460,
+      "duration": 0,
+      "cooldownTurns": 0,
+      "innerRadiusUnits": 1.2,
+      "edgeDamageRatio": 0.5,
+      "projectileRadiusUnits": 0.35,
+      "fuseOnHitMs": 30,
+      "explodeAnimMs": 450,
+      "crateSizeUnits": 1.5,
+      "sprite": "item_watermelonbomb_projectile_40"
+    },
+    {
+      "id": "fruit_crate",
+      "name": "水果箱",
+      "desc": "点击放置木箱 · 阻挡弹道 · 存活 4 个 turn · 冷却 1 个 turn",
+      "type": "obstacle",
+      "range": 0.92,
+      "damage": 0,
+      "radius": 0,
+      "knockback": 0,
+      "duration": 4,
+      "cooldownTurns": 1,
+      "innerRadiusUnits": 0,
+      "edgeDamageRatio": 1,
+      "projectileRadiusUnits": 0.4,
+      "fuseOnHitMs": 0,
+      "explodeAnimMs": 0,
+      "crateSizeUnits": 1.5,
+      "sprite": "item_fruitcrate_projectile_48"
+    }
+  ]
+};

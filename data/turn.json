@@ -1,0 +1,28 @@
+{
+  "version": "0.3.0",
+  "schema": "turn",
+  "description": "回合状态机配置。第 3 步新增。所有时间单位均为毫秒。改动本文件后执行 node tools/sync-data.js 同步镜像。",
+  "fields": {
+    "turnTime": "number 必填。每个行动回合的倒计时总时长（毫秒），默认 30000 = 30 秒",
+    "teamOrder": "array 必填。阵营轮转顺序，元素取值 'blue'（己方）| 'red'（敌方）。新增阵营只需在此加一项",
+    "initialTeam": "string 必填。开局先手的阵营，必须是 teamOrder 中的元素，默认 'blue'",
+    "timeoutProtection": "number 必填。状态超时保护阈值（毫秒）。任何状态停留超过该值都会被强制推进到安全状态，默认 5000",
+    "maxTurns": "number 可选。行动回合上限，达到后按双方总血量判胜，默认 40",
+    "stateDurations": "object 必填。可由 tick 自动推进的状态其停留时长（毫秒）：TURN_START / TURN_END / SWITCH_TEAM。未列出的状态需外部事件或超时保护驱动"
+  },
+  "turn": {
+    "turnTime": 30000,
+    "teamOrder": [
+      "blue",
+      "red"
+    ],
+    "initialTeam": "blue",
+    "timeoutProtection": 5000,
+    "maxTurns": 40,
+    "stateDurations": {
+      "TURN_START": 400,
+      "TURN_END": 300,
+      "SWITCH_TEAM": 300
+    }
+  }
+}

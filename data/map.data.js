@@ -1,0 +1,114 @@
+/**
+ * ============================================================
+ * map.data.js —— data/map.json 的运行时镜像
+ * ============================================================
+ * 【本文件由 tools/sync-data.js 自动生成，请勿手工编辑】
+ *
+ * 用途：地图配置。
+ *   浏览器在 file:// 协议（双击 index.html）下会以 CORS 拦截
+ *   fetch / XMLHttpRequest，导致 Phaser 的 this.load.json() 必然失败；
+ *   而 <script src> 在 file:// 下不受限制，因此把同一份 JSON
+ *   包成 JS 对象，通过 <script> 加载即可。
+ *
+ * 修改流程：
+ *   1) 编辑 data/map.json（唯一策划源）
+ *   2) 执行 node tools/sync-data.js  重新生成本文件
+ *   3) 双击 tools/check-data.html 确认逐字段一致
+ * ============================================================
+ */
+window.FK_DATA = window.FK_DATA || {};
+window.FK_DATA.map = {
+  "version": "0.2.0",
+  "schema": "map",
+  "description": "地图配置。第 2 步填充 FruitKingArena（水果王竞技场），第 8 步开始构建地形与碰撞体；第 7.10 步新增 bounds.type（边界类型：当前 demo 地图为实体墙）。所有坐标均为地图单位 u（1 u = pxPerUnit 像素），原点在竞技场左上角，y 轴向下为正。",
+  "fields": {
+    "id": "string 必填。地图唯一标识，必须与 js/registry/registerAll.js 中注册的 id 一致",
+    "name": "string 必填。地图显示名（中文）",
+    "width": "number 必填。地图宽度（地图单位 u）",
+    "height": "number 必填。地图高度（地图单位 u）",
+    "pxPerUnit": "number 必填。1 个地图单位对应多少像素，第 0 步冻结为 48",
+    "platforms": "array 必填。平台列表，每项 { id, x, y, width, height, material }；x/y 为平台左上角（单位制），material 可选 'rock' | 'cookie' | 'jelly'",
+    "waterLevel": "number 必填。果汁池液面高度（单位制 Y），单位中心越过该值即判定落水；默认等于 height",
+    "bounds": "object 可选（第 7.10 步）。竞技场边界类型（数据驱动）：{ type: 'wall' | 'juice' }。'wall' = 实体墙，单位被击退撞上时按弹性系数弹回（与撞木箱同一套物理）；'juice' = 果汁边界，行为留待后续实现（本步按不反弹兜底）。缺省 'wall'",
+    "spawnPoints": "array 必填。出生点列表，每项 { team, unitId, x, y }；team 为 'blue' | 'red'，unitId 必须存在于 units.json"
+  },
+  "map": {
+    "id": "fruit_king_arena",
+    "name": "水果王竞技场",
+    "width": 30,
+    "height": 12,
+    "pxPerUnit": 48,
+    "platforms": [
+      {
+        "id": "rock_high_l",
+        "x": 0.5,
+        "y": 3,
+        "width": 7,
+        "height": 1.2,
+        "material": "rock"
+      },
+      {
+        "id": "rock_high_r",
+        "x": 22.5,
+        "y": 3,
+        "width": 7,
+        "height": 1.2,
+        "material": "rock"
+      },
+      {
+        "id": "cookie_low_l",
+        "x": 8.5,
+        "y": 6,
+        "width": 4,
+        "height": 0.6,
+        "material": "cookie"
+      },
+      {
+        "id": "cookie_low_r",
+        "x": 17.5,
+        "y": 6,
+        "width": 4,
+        "height": 0.6,
+        "material": "cookie"
+      },
+      {
+        "id": "jelly_float",
+        "x": 13,
+        "y": 5,
+        "width": 4,
+        "height": 0.8,
+        "material": "jelly"
+      }
+    ],
+    "waterLevel": 9.5,
+    "bounds": {
+      "type": "wall"
+    },
+    "spawnPoints": [
+      {
+        "team": "blue",
+        "unitId": "fruit_king",
+        "x": 2,
+        "y": 2.5
+      },
+      {
+        "team": "blue",
+        "unitId": "apple_guard",
+        "x": 5.5,
+        "y": 2.5
+      },
+      {
+        "team": "red",
+        "unitId": "grape_soldier",
+        "x": 24.5,
+        "y": 2.5
+      },
+      {
+        "team": "red",
+        "unitId": "lemon_general",
+        "x": 28,
+        "y": 2.5
+      }
+    ]
+  }
+};
