@@ -68,7 +68,7 @@ window.FK = window.FK || {};
     const dragY = num(i.dragY, 0);
     const maxDragPx = Math.max(1, num(i.maxDragPx, 180));
     const minPowerRatio = clamp(num(i.minPowerRatio, 0.08), 0, 1);
-    const maxSpeed = num(i.maxSpeed, 1140);
+    const maxSpeed = num(i.maxSpeed, 954);
     const angleLimitDeg = num(i.angleLimitDeg, 360);
 
     const dist = Math.sqrt(dragX * dragX + dragY * dragY);
@@ -138,9 +138,10 @@ window.FK = window.FK || {};
     const stepSec = Math.max(1e-4, num(i.stepSec, 1 / 60));
     const maxSteps = Math.max(1, Math.round(num(i.maxSteps, 600)));
     const g = num(i.gravityY, 1500);
-    const restitution = clamp(num(i.restitution, 0.42), 0, 1);
-    const minBounceSpeed = Math.max(0, num(i.minBounceSpeed, 45));
-    const maxBounces = Math.max(0, Math.round(num(i.maxBounces, 2)));
+    const restitution = clamp(num(i.restitution, 0.58), 0, 1);
+    const restitutionDecay = clamp(num(i.restitutionDecay, 0.78), 0, 1);
+    const minBounceSpeed = Math.max(0, num(i.minBounceSpeed, 28));
+    const maxBounces = Math.max(0, Math.round(num(i.maxBounces, 8)));
     const halfWidth = Math.max(0, num(i.halfWidth, 24));
     const contactGapPx = Math.max(0, num(i.contactGapPx, 0.5));
     const bounds = i.bounds || null;
@@ -184,6 +185,7 @@ window.FK = window.FK || {};
     };
     const physCfg = {
       restitution: restitution,
+      restitutionDecay: restitutionDecay,
       minBounceSpeed: minBounceSpeed,
       maxBounceCount: maxBounces,
       contactGapPx: contactGapPx
@@ -336,7 +338,7 @@ window.FK = window.FK || {};
       this.cfg = opts.config || M;
 
       /* ---------------- 可调参数（全部来自配置） ---------------- */
-      this.maxSpeed = num(opts.maxSpeed, num(this.cfg.maxSpeed, 1140));
+      this.maxSpeed = num(opts.maxSpeed, num(this.cfg.maxSpeed, 954));
       this.maxDragPx = num(opts.maxDragPx, num(this.cfg.maxDragPx, 180));
       this.minPowerRatio = num(opts.minPowerRatio, num(this.cfg.minPowerRatio, 0.08));
       this.angleLimitDeg = num(opts.angleLimitDeg, num(this.cfg.angleLimitDeg, 360));
@@ -344,10 +346,11 @@ window.FK = window.FK || {};
       this.airDragX = num(opts.airDragX, num(this.cfg.airDragX, 0));
       this.maxFlightMs = num(opts.maxFlightMs, num(this.cfg.maxFlightMs, 4000));
       this.maxStepMs = num(opts.maxStepMs, num(this.cfg.maxStepMs, 50));
-      this.maxBounces = num(opts.maxBounces, num(this.cfg.maxBounces, 2));
+      this.maxBounces = num(opts.maxBounces, num(this.cfg.maxBounces, 8));
       this.maxPreviewPoints = Math.max(4, Math.round(num(this.cfg.maxPreviewPoints, 90)));
-      this.restitution = num(opts.restitution, num(K.restitution, 0.42));
-      this.minBounceSpeed = num(opts.minBounceSpeed, num(K.minBounceSpeed, 45));
+      this.restitution = num(opts.restitution, num(this.cfg.restitution, num(K.restitution, 0.58)));
+      this.restitutionDecay = num(opts.restitutionDecay, num(this.cfg.restitutionDecay, 0.78));
+      this.minBounceSpeed = num(opts.minBounceSpeed, num(this.cfg.minBounceSpeed, num(K.minBounceSpeed, 28)));
       this.contactGapPx = num(opts.contactGapPx, num(this.cfg.contactGapPx, 0.5));
       this.pxPerUnit = num(opts.pxPerUnit, (FK.Config ? FK.Config.PX_PER_UNIT : 48));
 
@@ -367,6 +370,8 @@ window.FK = window.FK || {};
        * 由 TURN_START / TURN_SWITCH 复位，由 commitPlan 置位。
        */
       this.moveUsedThisTurn = false;
+      /** 本回合已经移动过的单位（移完只能由该单位投掷 / 放置） */
+      this.movedUnit = null;
       /** 是否正在拖拽制定移动方案 */
       this.planning = false;
       /** 正在规划的单位 */
@@ -470,6 +475,13 @@ window.FK = window.FK || {};
     /** 本回合是否已经移动过 */
     isMoveUsed() { return !!this.moveUsedThisTurn; }
 
+    /** 本回合已移动的单位；阵亡则解锁 */
+    getMovedUnit() {
+      const u = this.movedUnit;
+      if (!u || u.alive === false) { return null; }
+      return u;
+    }
+
     /** 本回合是否已经投掷 / 放置过（与投掷链路共用的回合口令） */
     isTurnUsed() {
       if (this.turnGate && typeof this.turnGate.canAct === 'function') {
@@ -541,7 +553,14 @@ window.FK = window.FK || {};
       if (this.planning) { this.cancelPlan(reason); }
       this.setCursor('default');
       this.moveUsedThisTurn = false;
-      if (this.activeUnit) { this.finishMove(this.activeUnit, reason); }
+      this.movedUnit = null;
+      if (this.activeUnit) {
+        if (typeof this.activeUnit.finishActiveMove === 'function') {
+          this.activeUnit.finishActiveMove(reason);
+        }
+        this.finishMove(this.activeUnit, reason);
+      }
+      this.resumeTurnTimer();
     }
 
     onStateChanged(payload) {
@@ -550,10 +569,12 @@ window.FK = window.FK || {};
       // 新回合：每回合只能移动一次 → 复位口令
       if (payload.to === S.TURN_START || payload.to === S.SWITCH_TEAM) {
         this.moveUsedThisTurn = false;
+        this.movedUnit = null;
       }
       if (payload.to === S.GAME_OVER) {
         if (this.planning) { this.cancelPlan('game-over'); }
         this.moveUsedThisTurn = false;
+        this.movedUnit = null;
       }
     }
 
@@ -626,6 +647,7 @@ window.FK = window.FK || {};
     /** 玩家拖拽锁定：终态或 AI 回合（不影响 startPlan / commitPlan 程序入口） */
     isPlayerInputBlocked() {
       if (this.isInputBlocked()) { return true; }
+      if (FK.Config && typeof FK.Config.isPaused === 'function' && FK.Config.isPaused()) { return true; }
       return !!(FK.Config && typeof FK.Config.isAiTurn === 'function' &&
         FK.Config.isAiTurn(this.turnManager));
     }
@@ -713,6 +735,10 @@ window.FK = window.FK || {};
           return { left: w.bounds.left, right: w.bounds.right };
         }
       }
+      if (FK.Config && typeof FK.Config.mapBoundsPx === 'function') {
+        const b = FK.Config.mapBoundsPx();
+        return { left: b.left, right: b.right };
+      }
       const A = (FK.Config && FK.Config.ARENA) ? FK.Config.ARENA : null;
       if (!A) { return null; }
       return {
@@ -749,44 +775,102 @@ window.FK = window.FK || {};
      * @param {FK.UnitBase} unit
      * @param {Object} shot computeMove 的结果
      */
-    buildPath(unit, shot) {
-      const launch = this.getLaunchPoint(unit);
-      const bounds = this.getBounds();
-      const maxSteps = Math.max(4, Math.round(this.maxFlightMs / 1000 / this.stepSec));
-      const landY = (typeof unit.getCollisionRadius === 'function')
-        ? unit.getCollisionRadius() : 24;
-      // 第 8.6 步：预览的落地判定与单位实飞同源（逐点按当前 x 查支撑面），
-      // 保证「弧线画到哪里，单位就落到哪里」，且弧线完整画到落点。
+    /** 预览落地：跳过木箱顶面，弧线按能跨过去画，撞箱不截断 */
+    previewSupportAt(unit) {
       const supportProvider = (unit && typeof unit.supportProvider === 'function')
         ? unit.supportProvider : null;
-      const supportAt = supportProvider
-        ? function (px, py) {
-          const sy = supportProvider(px, py);
-          return (typeof sy === 'number' && isFinite(sy)) ? sy : null;
+      if (!supportProvider) { return null; }
+      const self = this;
+      const isObs = (FK.TrajectoryPredictor && FK.TrajectoryPredictor.isObstacleRect)
+        ? FK.TrajectoryPredictor.isObstacleRect
+        : function (r) {
+          return !!(r && (r.material === 'crate' || r.kind === 'crate' ||
+            (typeof r.id === 'string' && r.id.indexOf('obstacle_') === 0)));
+        };
+      return function (px, py) {
+        let probeY = py;
+        for (let n = 0; n < 8; n++) {
+          const sy = supportProvider(px, probeY);
+          if (typeof sy !== 'number' || !isFinite(sy)) { return null; }
+          const crates = (typeof self.obstacles === 'function') ? (self.obstacles() || []) : [];
+          let crate = null;
+          for (let i = 0; i < crates.length; i++) {
+            const r = crates[i];
+            if (!isObs(r)) { continue; }
+            if (px < r.x || px > r.x + r.width) { continue; }
+            if (Math.abs(sy - r.y) <= 6) { crate = r; break; }
+          }
+          if (!crate) { return sy; }
+          probeY = crate.y + crate.height + 8;
         }
-        : null;
-      return simulatePath({
-        x: launch.x, y: launch.y,
-        vx: shot.vx, vy: shot.vy,
-        gravityY: (FK.Config && FK.Config.PHYSICS) ? FK.Config.PHYSICS.gravityY : 1500,
-        stepSec: this.stepSec,
-        maxSteps: maxSteps,
-        maxFlightMs: this.maxFlightMs,
-        // 预览抽稀：保证点数不超过 maxPreviewPoints
-        sampleEvery: 1,
-        bounds: bounds,
-        rects: this.getBounceRects(),
-        restitution: this.restitution,
-        minBounceSpeed: this.minBounceSpeed,
-        maxBounces: this.maxBounces,
-        halfWidth: landY,
-        contactGapPx: this.contactGapPx,
-        // 落地高度 = 起跳处的支撑面顶面 − 碰撞半径（与 UnitBase 的落地口径一致）
-        // 第 8.6 步：有支撑面查询时改走逐点判定，landingY 仅作为「拿不到支撑面数据」时的兜底
-        landingY: supportAt ? null : this.queryLandingY(unit, landY),
-        supportAt: supportAt,
-        waterLevelY: this.getWaterLevelY()
-      });
+        return null;
+      };
+    }
+
+    /**
+     * 预览弧线：纯抛体，忽略木箱 / 侧撞反弹（实飞仍走碰撞）。
+     * @param {FK.UnitBase} unit
+     * @param {Object} shot computeMove 的结果
+     */
+    buildPath(unit, shot) {
+      const launch = this.getLaunchPoint(unit);
+      const g = (FK.Config && FK.Config.PHYSICS) ? FK.Config.PHYSICS.gravityY : 1500;
+      const dt = this.stepSec;
+      const A = (FK.Config && FK.Config.AIM) ? FK.Config.AIM : {};
+      const base = (typeof A.previewMaxSteps === 'number') ? A.previewMaxSteps : 52;
+      const aimSpeed = Math.max(1, num(A.maxSpeed, 1200));
+      const speedScale = (this.maxSpeed || 954) / aimSpeed;
+      const power = Math.max(0.12, num(shot.powerRatio, 0));
+      const maxSteps = Math.max(14, Math.min(96, Math.round(base * speedScale * (0.42 + 0.58 * power))));
+      const every = Math.max(1, Math.round(num(this.cfg.previewSampleEvery, 2)));
+      const hw = (typeof unit.getCollisionRadius === 'function') ? unit.getCollisionRadius() : 24;
+      const supportAt = this.previewSupportAt(unit);
+      const waterY = this.getWaterLevelY();
+      const vx = num(shot.vx, 0);
+      const vy = num(shot.vy, 0);
+      const points = [{ x: launch.x, y: launch.y }];
+      let landing = { x: launch.x, y: launch.y };
+      let hitType = 'timeout';
+      let apexY = launch.y;
+
+      for (let step = 1; step <= maxSteps; step++) {
+        const t = step * dt;
+        const x = launch.x + vx * t;
+        const y = launch.y + vy * t + 0.5 * g * t * t;
+        const nvy = vy + g * t;
+        if (y < apexY) { apexY = y; }
+        landing = { x: x, y: y };
+        if (supportAt && nvy >= 0) {
+          const sy = supportAt(x, y);
+          if (typeof sy === 'number' && isFinite(sy) && y >= sy - hw) {
+            landing = { x: x, y: sy - hw };
+            hitType = 'landed';
+            if (step % every === 0) { points.push({ x: landing.x, y: landing.y }); }
+            break;
+          }
+        }
+        if (waterY !== null && y >= waterY) {
+          landing = { x: x, y: waterY };
+          hitType = 'water';
+          if (step % every === 0) { points.push({ x: landing.x, y: landing.y }); }
+          break;
+        }
+        if (step % every === 0) { points.push({ x: x, y: y }); }
+      }
+
+      return {
+        points: points,
+        allPoints: points,
+        landing: { x: round2(landing.x), y: round2(landing.y) },
+        start: { x: round2(launch.x), y: round2(launch.y) },
+        hitType: hitType,
+        bounces: 0,
+        flightTimeMs: Math.round(Math.max(0, points.length * every) * dt * 1000),
+        endVx: vx,
+        endVy: vy,
+        apexY: round2(apexY),
+        apexRise: round2(launch.y - apexY)
+      };
     }
 
     /**
@@ -845,6 +929,7 @@ window.FK = window.FK || {};
 
       // ① 本回合口令：移动每回合**只能一次**（移完还能投掷，但不能再移动）
       this.moveUsedThisTurn = true;
+      this.movedUnit = unit;
 
       // ② 单位起跳（位置推进交给 UnitBase.stepActiveMove）
       unit.setPosition(launch.x, launch.y);
@@ -856,6 +941,7 @@ window.FK = window.FK || {};
 
       this.activeUnit = unit;
       this.moveWindowMs = 0;
+      this.pauseTurnTimer();
       this.stats.committed += 1;
       this.stats.bounces += path.bounces;
 
@@ -960,9 +1046,20 @@ window.FK = window.FK || {};
      * @param {FK.UnitBase} unit
      * @param {string} reason
      */
+    pauseTurnTimer() {
+      const tm = this.turnManager;
+      if (tm && typeof tm.pauseTimer === 'function') { tm.pauseTimer(); }
+    }
+
+    resumeTurnTimer() {
+      const tm = this.turnManager;
+      if (tm && typeof tm.resumeTimer === 'function') { tm.resumeTimer(); }
+    }
+
     finishMove(unit, reason) {
       if (!unit || this.activeUnit !== unit) { return false; }
       this.activeUnit = null;
+      this.resumeTurnTimer();
 
       const fromX = num(unit.moveFromX, unit.x);
       const fromY = num(unit.moveFromY, unit.y);
@@ -1071,7 +1168,9 @@ window.FK = window.FK || {};
         if (typeof this.activeUnit.finishActiveMove === 'function') { this.activeUnit.finishActiveMove('reset'); }
         this.activeUnit = null;
       }
+      this.resumeTurnTimer();
       this.moveUsedThisTurn = false;
+      this.movedUnit = null;
       this.unit = null;
       this.shot = null;
       this.path = null;

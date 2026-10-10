@@ -497,10 +497,33 @@ window.FK = window.FK || {};
 
       // 只广播 projectile:removed（reason='water'），不新增事件常量：
       // 落水销毁对监听方来说就是「一次没有爆炸的移除」，用 reason 区分即可。
-      this.cleanupProjectile('water');
+      const reason = (landing && landing.hitType === 'bounds') ? 'bounds' : 'water';
+      this.cleanupProjectile(reason);
 
-      this.log('投掷物落入果汁池，直接销毁（不爆炸）：' + proj.itemId +
+      this.log('投掷物' + (reason === 'bounds' ? '飞出边界' : '落入果汁池') +
+        '，直接销毁（不爆炸）：' + proj.itemId +
         ' @(' + Math.round(landing.x) + ',' + Math.round(landing.y) + ')');
+      return true;
+    }
+
+    /** 第 14 步：投掷者左键手动引爆（仅 manualDetonate 道具，飞行中） */
+    tryManualDetonate(opts) {
+      const o = opts || {};
+      const proj = this.current;
+      if (!proj || this._exploded) { return false; }
+      if (typeof proj.hasLanded === 'function' && proj.hasLanded()) { return false; }
+      const cfg = proj.itemConfig;
+      if (!cfg || !cfg.manualDetonate) { return false; }
+      const team = (typeof proj.getTeam === 'function') ? proj.getTeam() : proj.team;
+      if (o.team && team && o.team !== team) { return false; }
+      proj.landFrom({
+        x: proj.pos.x,
+        y: proj.pos.y,
+        hitType: 'manual',
+        hitTarget: null
+      });
+      this.stats.landed += 1;
+      this.onLanded(proj.getLanding());
       return true;
     }
 
@@ -613,7 +636,8 @@ window.FK = window.FK || {};
         radiusPx: radiusPx,
         innerRadiusUnits: num(cfg.innerRadiusUnits, 0),
         edgeDamageRatio: num(cfg.edgeDamageRatio, 1),
-        damage: num(cfg.damage, 0),
+        damage: (proj && typeof proj.getExplodeDamage === 'function')
+          ? proj.getExplodeDamage() : num(cfg.damage, 0),
         knockback: num(cfg.knockback, 0),
         explodeAnimMs: explodeAnimMs,
         pxPerUnit: this.pxPerUnit,

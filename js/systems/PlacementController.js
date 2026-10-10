@@ -298,6 +298,7 @@ window.FK = window.FK || {};
 
     /** 玩家指针锁定：AI 回合不接受真实鼠标（合成指针仍给 AI 探测用） */
     isPlayerInputBlocked() {
+      if (FK.Config && typeof FK.Config.isPaused === 'function' && FK.Config.isPaused()) { return true; }
       return !!(FK.Config && typeof FK.Config.isAiTurn === 'function' &&
         FK.Config.isAiTurn(this.turnManager));
     }
@@ -347,12 +348,14 @@ window.FK = window.FK || {};
      * @returns {{x:number,y:number}|null}
      */
     resolvePointer(pointer) {
-      const x = num(pointer.worldX, num(pointer.x, null));
-      const y = num(pointer.worldY, num(pointer.y, null));
-      if (x === null || y === null) { return null; }
-      if (this.blocksPoint && this.blocksPoint(x, y)) { return null; }
+      const sx = num(pointer.x, null);
+      const sy = num(pointer.y, null);
+      const x = num(pointer.worldX, sx);
+      const y = num(pointer.worldY, sy);
+      if (x === null || y === null || sx === null || sy === null) { return null; }
       const canvas = (FK.Config && FK.Config.CANVAS) ? FK.Config.CANVAS : { width: 1600, height: 800 };
-      if (x < 0 || y < 0 || x > canvas.width || y > canvas.height) { return null; }
+      if (sx < 0 || sy < 0 || sx > canvas.width || sy > canvas.height) { return null; }
+      if (this.blocksPoint && this.blocksPoint(sx, sy)) { return null; }
       return { x: x, y: y };
     }
 
@@ -402,6 +405,7 @@ window.FK = window.FK || {};
       const w = this.getColliders();
       if (w && w.bounds && typeof w.bounds.left === 'number') { return w.bounds; }
       const CFG = FK.Config || {};
+      if (typeof CFG.mapBoundsPx === 'function') { return CFG.mapBoundsPx(); }
       const A = CFG.ARENA || { widthUnits: 30, heightUnits: 12 };
       return {
         left: CFG.arenaX ? CFG.arenaX(0) : 80,
@@ -420,15 +424,15 @@ window.FK = window.FK || {};
      */
     unitBounds(unit) {
       if (!unit) { return null; }
-      if (typeof unit.getBounds === 'function') {
-        const b = unit.getBounds();
-        if (b && num(b.width, 0) > 0 && num(b.height, 0) > 0) {
-          return { x: b.x, y: b.y, width: b.width, height: b.height };
-        }
-      }
-      const r = (typeof unit.getHitRadius === 'function')
-        ? num(unit.getHitRadius(), 24) : num(unit.hitRadius, 24);
-      return { x: num(unit.x, 0) - r, y: num(unit.y, 0) - r, width: r * 2, height: r * 2 };
+      const r = (typeof unit.getCollisionRadius === 'function')
+        ? num(unit.getCollisionRadius(), 24)
+        : 24;
+      return {
+        x: num(unit.x, 0) - r,
+        y: num(unit.y, 0) - r,
+        width: r * 2,
+        height: r * 2
+      };
     }
 
     /**
@@ -499,6 +503,7 @@ window.FK = window.FK || {};
       // ---- 下落路径（木箱起始顶边 → 落点）是否压到单位 ----
       // 第 8 步：已阵亡单位不再占位、也不参与任何碰撞，因此直接跳过
       const corridorTop = py - half;
+      const landTop = surfaceY - sizePx;
       let hitUnit = null;
       const units = this.unitsProvider() || [];
       for (let i = 0; i < units.length; i++) {
@@ -507,8 +512,10 @@ window.FK = window.FK || {};
         const b = this.unitBounds(u);
         if (!b) { continue; }
         const overlapX = right > b.x && left < b.x + b.width;
-        const overlapY = surfaceY > b.y && corridorTop < b.y + b.height;
-        if (overlapX && overlapY) { hitUnit = u; break; }
+        if (!overlapX) { continue; }
+        const fallHit = surfaceY > b.y && corridorTop < b.y + b.height;
+        const landHit = landTop < b.y + b.height && surfaceY > b.y;
+        if (fallHit || landHit) { hitUnit = u; break; }
       }
 
       return {
@@ -557,8 +564,7 @@ window.FK = window.FK || {};
         valid: valid,
         reason: reason,
         message: cd > 0
-          ? ('「' + (this.item && this.item.name ? this.item.name : this.itemId) +
-             '」冷却中，还需等待 ' + cd + ' 个 turn')
+          ? ('「' + (this.item && this.item.name ? this.item.name : this.itemId) + '」冷却中')
           : (MESSAGE[reason] || ''),
         cooldownRemaining: cd,
         outcome: g.outcome,

@@ -38,6 +38,8 @@ window.FK = window.FK || {};
       this.selected = null;
       /** 当前悬停的单位 */
       this.hovered = null;
+      /** () => Unit|null：本回合已移动的单位，锁定后只能选它行动 */
+      this.actionLockProvider = null;
 
       /** 点击是否允许冒泡给后续步骤（第 5 步拖拽会用到） */
       this.enabled = true;
@@ -92,6 +94,7 @@ window.FK = window.FK || {};
      */
     isPlayerInputBlocked() {
       if (this.isInputBlocked()) { return true; }
+      if (FK.Config && typeof FK.Config.isPaused === 'function' && FK.Config.isPaused()) { return true; }
       return !!(FK.Config && typeof FK.Config.isAiTurn === 'function' &&
         FK.Config.isAiTurn(this.turnManager));
     }
@@ -152,12 +155,14 @@ window.FK = window.FK || {};
 
       const wx = numOr(pointer.worldX, numOr(pointer.x, -1));
       const wy = numOr(pointer.worldY, numOr(pointer.y, -1));
+      const sx = numOr(pointer.x, wx);
+      const sy = numOr(pointer.y, wy);
 
       /**
        * 第 8.5 步：点在**底部 UI**（模式条 / 道具栏）上时不算「点空白」。
-       * 否则「点『移动』按钮准备拖拽」会先把单位取消选中，移动模式就没法用了。
+       * 道具栏是镜头 HUD 坐标，必须用 pointer.x/y，不能用世界坐标。
        */
-      if (this.isOverBottomUI(wx, wy)) { return; }
+      if (this.isOverBottomUI(sx, sy)) { return; }
 
       const unit = this.hitTest(wx, wy);
       if (!unit) {
@@ -200,14 +205,28 @@ window.FK = window.FK || {};
      * 是否允许选中该单位（只允许当前回合阵营）
      * @param {FK.UnitBase} unit
      */
+    setActionLockProvider(fn) {
+      this.actionLockProvider = (typeof fn === 'function') ? fn : null;
+      return this;
+    }
+
+    getActionLockUnit() {
+      if (typeof this.actionLockProvider !== 'function') { return null; }
+      const u = this.actionLockProvider();
+      if (!u || u.alive === false) { return null; }
+      return u;
+    }
+
     canSelect(unit) {
       if (!unit) { return false; }
       // 第 8 步：死亡单位不可选；GAME_OVER 后任何单位都不可选
       if (unit.alive === false) { return false; }
       if (this.isInputBlocked()) { return false; }
       const team = this.getCurrentTeam();
-      if (team === null) { return true; }
-      return unit.getTeam() === team;
+      if (team !== null && unit.getTeam() !== team) { return false; }
+      const lock = this.getActionLockUnit();
+      if (lock && unit !== lock) { return false; }
+      return true;
     }
 
     /**

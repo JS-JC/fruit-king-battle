@@ -130,7 +130,7 @@ window.FK = window.FK || {};
     thinkDelayMs: { min: 1000, max: 2000 },
     actTimeoutMs: 6000,
     error: { powerRatio: 0.08, angleDeg: 4, landingTolerancePx: 60 },
-    itemWeights: { cherry_bomb: 40, watermelon_bomb: 30, fruit_crate: 20, move: 10 },
+    itemWeights: { cherry_bomb: 32, watermelon_bomb: 24, banana_bomb: 24, fruit_crate: 12, move: 8 },
     fallbackItemId: 'cherry_bomb',
     search: {
       powerMin: 0.22, powerMax: 1, powerSteps: 18,
@@ -159,6 +159,7 @@ window.FK = window.FK || {};
         { condition: 'enemy_hp_gt_40_and_near', item: 'watermelon_bomb' },
         { condition: 'enemy_hp_le_40', item: 'cherry_bomb' },
         { condition: 'enemy_on_edge', item: 'watermelon_bomb' },
+        { condition: 'mid_range', item: 'banana_bomb' },
         { condition: 'crates_placed_and_safe', item: 'fruit_crate' },
         { condition: 'fallback', item: 'cherry_bomb' }
       ],
@@ -473,11 +474,16 @@ window.FK = window.FK || {};
     if (!picked && hp > 0 && hp <= 40) {
       picked = want('cherry_bomb', 'low-hp');
     }
+    if (!picked && distUnits >= 5 && distUnits <= 14) {
+      picked = want('banana_bomb', 'mid-range');
+    }
     if (!picked && !followUp && crates >= 2 && !threatened) {
       picked = want('fruit_crate', 'crates-and-safe');
     }
     if (!picked) {
-      picked = want('cherry_bomb', 'fallback-cherry') || want('watermelon_bomb', 'fallback-melon');
+      picked = want('cherry_bomb', 'fallback-cherry') ||
+        want('banana_bomb', 'fallback-banana') ||
+        want('watermelon_bomb', 'fallback-melon');
     }
     if (!picked) {
       const id = usable[0];
@@ -620,7 +626,7 @@ window.FK = window.FK || {};
     /** 评估一组参数：返回候选对象（wasted = 落水）或 null */
     function evaluate(power, angleDeg) {
       tried += 1;
-      const speed = maxSpeed * itemRange * power;
+      const speed = maxSpeed * itemRange * power * Math.max(0.05, num(item.speedScale, 1));
       const rad = angleDeg * Math.PI / 180;
       const vx = Math.cos(rad) * speed * dir;
       const vy = -Math.sin(rad) * speed;
@@ -724,7 +730,8 @@ window.FK = window.FK || {};
 
     const powerRatio = clamp(basePower * (1 + kPower), 0.05, 1);
     const angleDeg = clamp(baseAngle + dAngle, 1, 89);
-    const speed = maxSpeed * itemRange * powerRatio;
+    const speed = maxSpeed * itemRange * powerRatio *
+      Math.max(0.05, num((o.item || {}).speedScale, 1));
     const rad = angleDeg * Math.PI / 180;
 
     return {
@@ -950,7 +957,7 @@ window.FK = window.FK || {};
   function dragFromVelocity(vx, vy, opts) {
     const o = opts || {};
     const M = (FK.Config && FK.Config.MOVE) ? FK.Config.MOVE : {};
-    const maxSpeed = num(o.maxSpeed, num(M.maxSpeed, 1140));
+    const maxSpeed = num(o.maxSpeed, num(M.maxSpeed, 954));
     const maxDragPx = num(o.maxDragPx, num(M.maxDragPx, 180));
     const minPowerRatio = num(o.minPowerRatio, num(M.minPowerRatio, 0.08));
 
@@ -984,7 +991,7 @@ window.FK = window.FK || {};
     const cfg = resolveConfig(o.config);
     const m = cfg.move;
     const M = (FK.Config && FK.Config.MOVE) ? FK.Config.MOVE : {};
-    const maxSpeed = num(o.maxSpeed, num(M.maxSpeed, 1140));
+    const maxSpeed = num(o.maxSpeed, num(M.maxSpeed, 954));
     const world = o.world || {};
     const sim = resolveMoveSimulator(o);
     if (!sim) { return null; }

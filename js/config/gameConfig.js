@@ -26,10 +26,10 @@ window.FK = window.FK || {};
    * 1. 版本与文案
    * ------------------------------------------------------------------ */
   const VERSION = '1.0.0';                       // 项目版本
-  const STEP = 10;                               // 当前开发步骤
+  const STEP = 14;                               // 当前开发步骤
   const GAME_TITLE = '我是水果王';
   const GAME_TITLE_EN = 'IAmFruitKing';
-  const STEP_LABEL = '第 10 步：UI/HUD 与核心验收';
+  const STEP_LABEL = '第 14 步：香蕉弹 / 大地图 / 选图';
 
   /* ------------------------------------------------------------------
    * 2. 画布与缩放
@@ -140,10 +140,12 @@ window.FK = window.FK || {};
     launchOffsetYUnits: -0.3,
     /** 轨迹积分步长（秒），必须与 physics.stepFps 对齐 */
     stepSec: 1 / 60,
-    /** 轨迹最大步数（240 步 = 4 秒） */
+    /** 轨迹最大步数（240 步 = 4 秒，实飞 / AI 仍用这个） */
     maxSteps: 240,
+    /** 瞄准预览基准步数（range=1.0、满力）；实际步数再乘道具 range 与当前力度 */
+    previewMaxSteps: 52,
     /** 显示点抽稀：每 N 步取一个渲染点 */
-    sampleEvery: 3,
+    sampleEvery: 2,
     /** 轨迹点透明度 */
     trajectoryAlpha: 0.55,
     /** 未选道具时的默认道具 id（第 7 步接入道具栏后由玩家选择） */
@@ -170,15 +172,15 @@ window.FK = window.FK || {};
    *
    *   物理：复用 TrajectoryPredictor 的同一份积分原语（stepProjectile /
    *         stepIntegrate），保证「移动的落点预览」与「单位真实飞行」逐帧一致。
-   *   射程：满力 45° 无地形射程 = maxSpeed² / gravityY = 1140² / 1500 ≈ 866px ≈ 18.0u
-   *         （约三分之二张地图，可从左高台一路跳到饼干台上）。
+   *   射程：满力 45° 无地形射程 = maxSpeed² / gravityY = 954² / 1500 ≈ 607px ≈ 12.6u
+   *         （相对原先 1140 缩短约 30% 水平距离）。
    *   碰撞：水平方向撞木箱 / 撞墙 → 按 KNOCKBACK.restitution 弹性弹回（可多次），
    *         逐段推进防隧穿；垂直方向不做障碍判定（规则：只检测水平方向）。
    *   落水：飞行结束落到无支撑面的位置 → 继续下坠 → 越过水面判死（复用第 8 步链路）。
    * ------------------------------------------------------------------ */
   const MOVE = {
     /** 移动力度上限（px/s）：满力基准速度（与 AIM.maxSpeed 同量纲、互相独立） */
-    maxSpeed: 1140,
+    maxSpeed: 954,
     /** 最大拖拽距离（屏幕逻辑像素）：拖到这么远即为满力（与瞄准同一手感） */
     maxDragPx: 180,
     /** 力度下限：拖拽距离接近 0 时仍给一点初速度，避免原地掉落 */
@@ -201,10 +203,21 @@ window.FK = window.FK || {};
     maxStepMs: 50,
     /** 垂直速度上限（px/s）：防止拖到极端角度时单位飞出画面上方太久 */
     maxSpeedY: 1180,
-    /** 同一次移动最多弹回几次（第 3 次接触即停，与 DAMAGE.knockBounceMaxCount 对齐） */
-    maxBounces: 2,
+    /**
+     * 主动跳跃撞箱 / 撞墙的弹性（只影响 MOVE，不改击退）。
+     * 击退用 DAMAGE.knockRestitution=0.08 几乎贴死；跳跃需要弹开才跟得上预览。
+     */
+    restitution: 0.58,
+    restitutionDecay: 0.78,
+    minBounceSpeed: 28,
+    /** 同一次跳跃最多弹回几次（撞障后仍能滑出去，避免刚碰到就钉死） */
+    maxBounces: 8,
     /** 每次移动渲染的最大轨迹点数（超过即抽稀，保证绘制开销恒定） */
-    maxPreviewPoints: 90,
+    maxPreviewPoints: 36,
+    /** 移动预览最长飞行（毫秒）：只影响弧线显示，实飞仍用 maxFlightMs */
+    previewMaxFlightMs: 900,
+    /** 预览点抽稀步长（与投掷白点同一节奏） */
+    previewSampleEvery: 2,
     /* ---- 表现层（占位美术） ---- */
     /** 轨迹预览深度：与投掷轨迹一致（低于 HUD） */
     previewDepth: 40,
@@ -231,8 +244,8 @@ window.FK = window.FK || {};
   const PROJECTILE = {
     /** 投掷物渲染深度：高于单位（10），低于轨迹（40）与 HUD（60） */
     depth: 20,
-    /** 爆炸圆环渲染深度：略高于投掷物 */
-    explosionDepth: 22,
+    /** 爆炸范围圈：高于单位，低于 HUD */
+    explosionDepth: 34,
     /** 飞行硬上限（毫秒）：超过即视为超时落地，防止投掷物永远不落地 */
     maxFlightMs: 6000,
     /** 单帧最大步进时间（毫秒）：掉帧/切后台回来时钳制，避免穿透平台 */
@@ -510,12 +523,23 @@ window.FK = window.FK || {};
       throw: { enabled: true },
       explode_cherry: { enabled: true },
       explode_watermelon: { enabled: true },
+      explode_banana: { enabled: true },
       splash: { enabled: true },
       crate_land: { enabled: true },
       move: { enabled: true },
       turn_switch: { enabled: true },
       click: { enabled: true }
     }
+  };
+
+  const CAMERA = {
+    edgePx: 44,
+    panSpeed: 860,
+    arrowSize: 54,
+    arrowDepth: 72,
+    followLerp: 0.16,
+    /** 玩家回合开始时镜头挪向角色的插值（越大越快） */
+    turnFocusLerp: 0.14
   };
 
   const HUD = {
@@ -530,14 +554,14 @@ window.FK = window.FK || {};
     powerBarH: 18,
     selectedSlotScale: 1.08,
     copy: {
-      allyAct: '己方行动',
-      enemyAct: '敌方行动',
+      allyAct: '你的回合（蓝色方可操作）',
+      enemyAct: '敌方回合（红色方 AI）',
       turnOf: '第 {n} 回合',
       turnCap: '回合 {n} / {max}',
       aiThinking: '敌方思考中…',
       startHint: '点击「开始对局」进入战场',
       how1: '点击己方水果选中，按住拖拽瞄准，松手投出炸弹',
-      how2: '底部四格：樱桃炸弹 / 西瓜炸弹 / 水果箱 / 移动',
+      how2: '底部五格：樱桃 / 西瓜 / 香蕉弹 / 水果箱 / 移动；香蕉弹地形弹跳，没动能或左键引爆',
       how3: '把敌人打空血量，或炸下高台落入果汁池即可获胜',
       start: '开始对局'
     }
@@ -586,7 +610,7 @@ window.FK = window.FK || {};
      */
     error: { powerRatio: 0.08, angleDeg: 4, landingTolerancePx: 60 },
     /** 道具权重（规则 4）：樱桃 40 / 西瓜 30 / 果箱 20 / 移动 10（总权重 100） */
-    itemWeights: { cherry_bomb: 40, watermelon_bomb: 30, fruit_crate: 20, move: 10 },
+    itemWeights: { cherry_bomb: 32, watermelon_bomb: 24, banana_bomb: 24, fruit_crate: 12, move: 8 },
     /** 兜底投掷道具：主选道具不可用时用它，保证 AI 不会站着不动 */
     fallbackItemId: 'cherry_bomb',
     /**
@@ -627,6 +651,7 @@ window.FK = window.FK || {};
         { condition: 'enemy_hp_gt_40_and_near', item: 'watermelon_bomb' },
         { condition: 'enemy_hp_le_40', item: 'cherry_bomb' },
         { condition: 'enemy_on_edge', item: 'watermelon_bomb' },
+        { condition: 'mid_range', item: 'banana_bomb' },
         { condition: 'crates_placed_and_safe', item: 'fruit_crate' },
         { condition: 'fallback', item: 'cherry_bomb' }
       ],
@@ -695,6 +720,7 @@ window.FK = window.FK || {};
     DEATH: Object.freeze(DEATH),
     VICTORY: Object.freeze(VICTORY),
     RESULT: Object.freeze(RESULT),
+    CAMERA: Object.freeze(CAMERA),
     HUD: Object.freeze(HUD),
     BACKGROUND: Object.freeze(BACKGROUND),
     AUDIO: Object.freeze(AUDIO),
@@ -754,12 +780,29 @@ window.FK = window.FK || {};
 
     /** 竞技场像素宽 */
     arenaWidthPx: function () {
-      return ARENA.widthUnits * PX_PER_UNIT;
+      const map = (window.FK.Configs && window.FK.Configs.map) || null;
+      const w = (map && map.width) || ARENA.widthUnits;
+      return w * ((map && map.pxPerUnit) || PX_PER_UNIT);
     },
 
     /** 竞技场像素高 */
     arenaHeightPx: function () {
-      return ARENA.heightUnits * PX_PER_UNIT;
+      const map = (window.FK.Configs && window.FK.Configs.map) || null;
+      const h = (map && map.height) || ARENA.heightUnits;
+      return h * ((map && map.pxPerUnit) || PX_PER_UNIT);
+    },
+
+    /** 当前地图世界像素边界（选图后以 MapConfig 为准，不再写死 30×12） */
+    mapBoundsPx: function () {
+      const map = (window.FK.Configs && window.FK.Configs.map) || null;
+      const w = (map && typeof map.width === 'number') ? map.width : ARENA.widthUnits;
+      const h = (map && typeof map.height === 'number') ? map.height : ARENA.heightUnits;
+      return {
+        left: FK.Config.arenaX(0),
+        right: FK.Config.arenaX(w),
+        top: FK.Config.arenaY(0),
+        bottom: FK.Config.arenaY(h)
+      };
     },
 
     /**
@@ -775,6 +818,16 @@ window.FK = window.FK || {};
       if (!turnManager || typeof turnManager.getCurrentTeam !== 'function') { return false; }
       const team = turnManager.getCurrentTeam();
       return !!team && team === (ai.team || 'red');
+    },
+
+    /** 战斗是否处于暂停（暂停界面打开时为 true） */
+    isPaused: function () {
+      return !!FK.Config._battlePaused;
+    },
+
+    setPaused: function (v) {
+      FK.Config._battlePaused = !!v;
+      return FK.Config._battlePaused;
     },
 
     /**

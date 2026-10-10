@@ -9,9 +9,9 @@
  *     · BattleScene / HUD   —— 底部提示行显示冷却状态
  *
  * 冷却语义（与 items.json → cooldownTurns 一一对应）：
- *   某一方在第 N 个 turn 使用道具后，**第 N+1 个 turn 内不能再用**（该 turn 结束时归零），
- *   第 N+2 个 turn 已恢复可用。例：蓝方 Turn 1 放箱子 → Turn 2 处于冷却 →
- *   Turn 3 蓝方行动时已恢复（"中间隔 1 个回合"就能再放）。
+ *   某一方在第 N 个自己的行动回合使用道具后，接下来 cooldownTurns 个**自己的**
+ *   行动回合内不能再用。例：cooldownTurns=1 时，蓝方放箱子 → 蓝方下一次行动仍冷却
+ *   → 再下一次蓝方行动才恢复（对方回合不吃掉冷却）。
  *
  * 为什么要按阵营分别记账：
  *   双方轮流行动，且道具栏是共用的。若只有一份全局冷却，
@@ -23,10 +23,8 @@
  *   ① 使用当回合不扣自己的冷却：使用那一刻只登记 pending，
  *      等这个 turn 的 turn:end 到来才转成正式冷却（remaining = cooldownTurns）；
  *      否则「放完箱子当回合结束就扣完」，等于没有冷却。
- *   ② 冷却按 turn 递减（每经过一个 turn:end 扣 1）：因此冷却最多持续
- *      cooldownTurns 个 turn；1 个 turn 的冷却会被对方那个回合"用掉"，
- *      这正是策划要的效果——**同一方连续两次行动都能放箱子**，
- *      真正把每方同时在场数量压到 2 个的是「存活 4 个 turn」这条规则。
+ *   ② 冷却只在**本方** turn:end 时递减：对方回合结束不扣本方冷却，
+ *      因此 cooldownTurns=1 就是「跳过自己下一次行动再能用」。
  *
  * 计时驱动：
  *   由 BattleScene 在既有 `turn:end` 事件里调用 onTurnEnd(turnNumber, team)，
@@ -108,7 +106,7 @@ window.FK = window.FK || {};
     /**
      * 回合结束（由 BattleScene 在 turn:end 调用）
      *   · 本回合使用过的道具：pending 转正为 remaining（使用当回合不计入）
-     *   · 已冷却中的道具：-1（按 turn 递减，因此会被对方那个回合"用掉"）
+     *   · 已冷却中的道具：仅本方 turn:end 时 -1（对方回合不扣）
      * @param {number} [turnNumber] 本次 turn:end 所属回合号
      * @param {string} [team] 刚结束回合的阵营（缺省 = 不推进任何一方）
      * @returns {ItemCooldown} this
@@ -136,6 +134,7 @@ window.FK = window.FK || {};
       const cooling = Object.keys(this.remaining);
       for (let i = 0; i < cooling.length; i++) {
         const k = cooling[i];
+        if (k.indexOf(t + '|') !== 0) { continue; }          // 只扣本方回合，对方回合不吃掉冷却
         if (justArmed[k]) { continue; }                       // 转正的那一次不递减
         if (this.remaining[k] <= 0) { delete this.remaining[k]; continue; }
         this.remaining[k] -= 1;

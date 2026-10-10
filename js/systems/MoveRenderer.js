@@ -79,6 +79,8 @@ window.FK = window.FK || {};
         this.ringGfx = this.scene.add.graphics();
         if (typeof this.lineGfx.setDepth === 'function') { this.lineGfx.setDepth(this.depth); }
         if (typeof this.ringGfx.setDepth === 'function') { this.ringGfx.setDepth(this.depth + 1); }
+        if (typeof this.lineGfx.setSize === 'function') { this.lineGfx.setSize(8192, 8192); }
+        if (typeof this.ringGfx.setSize === 'function') { this.ringGfx.setSize(8192, 8192); }
       } else {
         this.lineGfx = null;
         this.ringGfx = null;
@@ -115,8 +117,9 @@ window.FK = window.FK || {};
         this.clear();
         return;
       }
+      this.syncViewport();
       this.drawPath(preview);
-      this.drawLanding(preview);
+      if (this.ringGfx) { this.ringGfx.clear(); }
       this.lastDraw.visible = true;
     }
 
@@ -144,6 +147,17 @@ window.FK = window.FK || {};
     }
 
     /** 点是否在可视区域内（含余量） */
+    syncViewport() {
+      const cam = this.scene && this.scene.cameras ? this.scene.cameras.main : null;
+      if (cam && cam.worldView) {
+        const r = cam.worldView;
+        this.viewport.left = r.x;
+        this.viewport.top = r.y;
+        this.viewport.right = r.x + r.width;
+        this.viewport.bottom = r.y + r.height;
+      }
+    }
+
     isVisiblePoint(x, y, margin) {
       const v = this.viewport;
       const m = num(margin, 0);
@@ -189,8 +203,7 @@ window.FK = window.FK || {};
     }
 
     /**
-     * 画移动轨迹（青色折线 + 抛物线点 + 弹回标记）
-     * 画布外的部分不画（预测仍然完整，只是不可见）
+     * 画移动轨迹：和投掷一样的小圆点，颜色用蓝色。
      * @param {Object} preview { points, landing, hitType, bounces }
      */
     drawPath(preview) {
@@ -200,46 +213,15 @@ window.FK = window.FK || {};
       const pts = preview.points || [];
       let drawn = 0;
       let culled = 0;
-      let prev = null;
 
       g.clear();
-      g.lineStyle(3, COLOR.line, this.alpha);
 
       for (let i = 0; i < pts.length; i++) {
         const p = pts[i];
-        const visible = this.isVisiblePoint(p.x, p.y, 0);
-        if (!visible) { culled += 1; }
-        if (prev) {
-          if (this.segmentVisible(prev, p)) {
-            g.beginPath();
-            g.moveTo(prev.x, prev.y);
-            g.lineTo(p.x, p.y);
-            g.strokePath();
-          }
-        }
-        if (visible) {
-          g.fillStyle(COLOR.lineBallistic, STYLE.pointAlpha);
-          g.fillCircle(p.x, p.y, STYLE.pointR);
-          drawn += 1;
-        }
-        prev = p;
-      }
-
-      // 起点标记（单位当前站位）
-      if (pts.length > 0 && this.isVisiblePoint(pts[0].x, pts[0].y, 0)) {
-        g.fillStyle(COLOR.unit, Math.min(1, this.alpha + 0.3));
-        g.fillCircle(pts[0].x, pts[0].y, 4.5);
-      }
-
-      // 弹回点：撞墙那一瞬间画一个黄色小圈
-      for (let i = 0; i < pts.length; i++) {
-        if (!pts[i].bounce) { continue; }
-        if (!this.isVisiblePoint(pts[i].x, pts[i].y, 0)) { continue; }
-        g.lineStyle(2, COLOR.bounce, 0.95);
-        g.strokeCircle(pts[i].x, pts[i].y, 9);
-        g.fillStyle(COLOR.bounce, 0.9);
-        g.fillCircle(pts[i].x - 4, pts[i].y, 2);
-        g.fillCircle(pts[i].x + 4, pts[i].y, 2);
+        if (!this.isVisiblePoint(p.x, p.y, 0)) { culled += 1; continue; }
+        g.fillStyle(COLOR.line, STYLE.pointAlpha);
+        g.fillCircle(p.x, p.y, STYLE.pointR);
+        drawn += 1;
       }
 
       this.lastDraw.totalPoints = pts.length;
@@ -247,6 +229,7 @@ window.FK = window.FK || {};
       this.lastDraw.culled = culled;
       this.lastDraw.bounces = preview.bounces || 0;
       this.lastDraw.hitType = preview.hitType || 'none';
+      this.lastDraw.ringRadius = 0;
     }
 
     /**

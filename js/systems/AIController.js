@@ -252,6 +252,10 @@ window.FK = window.FK || {};
       /* ---------- acting：等本次行动自然收尾 ---------- */
       this.actMs += dt;
 
+      if (this.actKind === 'throw') {
+        this.tryBananaDetonate();
+      }
+
       if (this.actKind === 'move') {
         const mc = this.moveController;
         const busy = !!(mc && typeof mc.isActive === 'function' && mc.isActive());
@@ -590,7 +594,8 @@ window.FK = window.FK || {};
         });
         if (!plan) {
           const dir = this.planner.directionSign(u, t);
-          const speed = maxSpeed * 0.55 * num(item.range, 1);
+          const speed = maxSpeed * 0.55 * num(item.range, 1) *
+            Math.max(0.05, num(item.speedScale, 1));
           const rad = 45 * Math.PI / 180;
           plan = {
             kind: 'throw', unit: u, unitId: this.planner.idOf(u),
@@ -670,6 +675,34 @@ window.FK = window.FK || {};
         ' · 预测落点 ' + (shot.landing ? '(' + Math.round(shot.landing.x) + ',' + Math.round(shot.landing.y) + ')' : '-') +
         '（回合由现有投掷链路自动收尾）');
       return true;
+    }
+
+    /** 香蕉弹飞行中靠近敌人则主动引爆 */
+    tryBananaDetonate() {
+      const pc = this.projectileController;
+      if (!pc || typeof pc.tryManualDetonate !== 'function') { return false; }
+      const proj = (typeof pc.getProjectile === 'function') ? pc.getProjectile() : null;
+      if (!proj) { return false; }
+      const cfg = proj.itemConfig;
+      if (!cfg || !cfg.manualDetonate) { return false; }
+      const pos = (typeof proj.getPosition === 'function') ? proj.getPosition() : { x: proj.x, y: proj.y };
+      const ppx = (FK.Config ? FK.Config.PX_PER_UNIT : 48);
+      const radiusPx = num(cfg.radius, 3.36) * ppx;
+      const all = this.unitsProvider() || [];
+      const enemies = this.planner ? this.planner.enemiesOf(all, this.team) : [];
+      let nearest = Infinity;
+      for (let i = 0; i < enemies.length; i++) {
+        const e = enemies[i];
+        if (!e || e.alive === false) { continue; }
+        const dx = (e.x || 0) - (pos.x || 0);
+        const dy = (e.y || 0) - (pos.y || 0);
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d < nearest) { nearest = d; }
+      }
+      const close = nearest <= radiusPx * 0.78;
+      const timeout = this.actMs >= 1400;
+      if (!close && !timeout) { return false; }
+      return !!pc.tryManualDetonate({ team: this.team });
     }
 
     /** 放置果箱：进入放置模式 → 依次探测候选点 → 合法即提交（真实自由落体 + 自动结束回合） */
@@ -767,7 +800,11 @@ window.FK = window.FK || {};
         return !!(it && it.type !== 'obstacle');
       });
 
-      let unit = this.plan && this.plan.unit ? this.plan.unit : null;
+      let unit = (this.moveController && typeof this.moveController.getMovedUnit === 'function')
+        ? this.moveController.getMovedUnit() : null;
+      if (!unit || myUnits.indexOf(unit) < 0) {
+        unit = this.plan && this.plan.unit ? this.plan.unit : null;
+      }
       if (!unit || myUnits.indexOf(unit) < 0) {
         const pick = this.planner.pickUnit({
           units: myUnits,

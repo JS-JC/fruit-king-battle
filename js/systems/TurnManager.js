@@ -101,6 +101,7 @@ window.FK = window.FK || {};
       this._elapsedTotal = 0;
       this._lastWholeSecond = Math.ceil(this._config.turnTime / 1000);
       this._running = false;
+      this._timerPaused = false;
 
       this._entries = [];
       this._seq = 0;
@@ -125,6 +126,7 @@ window.FK = window.FK || {};
       this._elapsedTotal = 0;
       this._lastWholeSecond = Math.ceil(this._config.turnTime / 1000);
       this._running = true;
+      this._timerPaused = false;
 
       this._log('START', '对局开始：先手 ' + this._teamLabel() +
         '，回合时长 ' + this._config.turnTime + 'ms，阵营顺序 [' +
@@ -160,7 +162,9 @@ window.FK = window.FK || {};
         }
 
         /* ---------- 1) 倒计时状态：扣减剩余时间，每秒广播 ---------- */
-        if (meta.countdown) {
+        /* 跳跃/暂停只冻倒计时，TURN_START → SELECT_UNIT 等自动推进照常走，
+           否则松手投掷时状态机还停在 TURN_START / TURN_END，进不了飞行态。 */
+        if (meta.countdown && !this._timerPaused) {
           this._remaining -= dt;
 
           if (this._remaining <= 0) {
@@ -334,6 +338,13 @@ window.FK = window.FK || {};
     /** 对局是否运行中 */
     isRunning() { return this._running; }
 
+    /** 单位跳跃飞行中暂停倒计时（落地后再走） */
+    pauseTimer() { this._timerPaused = true; return this; }
+
+    resumeTimer() { this._timerPaused = false; return this; }
+
+    isTimerPaused() { return !!this._timerPaused; }
+
     /** 当前状态已停留毫秒数 */
     getStateElapsed() { return Math.round(this._stateElapsed); }
 
@@ -374,6 +385,7 @@ window.FK = window.FK || {};
       this._elapsedTotal = 0;
       this._lastWholeSecond = Math.ceil(this._config.turnTime / 1000);
       this._running = false;
+      this._timerPaused = false;
       this._entries = [];
       this._seq = 0;
       return this;
@@ -396,6 +408,7 @@ window.FK = window.FK || {};
 
       if (isTurnStart) {
         // 新回合：倒计时重置为完整回合时长
+        this._timerPaused = false;
         this._remaining = this._config.turnTime;
       }
       if (meta && meta.countdown) {

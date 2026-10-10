@@ -13,12 +13,14 @@ window.FK = window.FK || {};
   'use strict';
 
   const STORAGE_KEY = 'fk.audio.muted';
+  const MUSIC_KEY = 'fk.audio.musicMuted';
   const SFX_BASE = 'assets/audio/sfx/';
   /** play(name) → 文件名（move 用 jump.mp3） */
   const SFX_FILES = {
     throw: 'throw.mp3',
     explode_cherry: 'explode_cherry.mp3',
     explode_watermelon: 'explode_watermelon.mp3',
+    explode_banana: 'explode_cherry.mp3',
     splash: 'splash.mp3',
     crate_land: 'crate_land.mp3',
     move: 'jump.mp3',
@@ -40,6 +42,7 @@ window.FK = window.FK || {};
     ctx: null,
     unlocked: false,
     muted: false,
+    musicMuted: false,
     lastPlay: {},
     active: {},
     noiseBuf: null,
@@ -48,6 +51,7 @@ window.FK = window.FK || {};
 
     init: function () {
       this.muted = this.readMuted();
+      this.musicMuted = this.readMusicMuted();
       this.bindGameplay();
       if (this.windowHooked) { return this; }
       this.windowHooked = true;
@@ -115,6 +119,41 @@ window.FK = window.FK || {};
     },
 
     isMuted: function () { return !!this.muted; },
+
+    readMusicMuted: function () {
+      try {
+        if (typeof localStorage !== 'undefined') {
+          return localStorage.getItem(MUSIC_KEY) === '1';
+        }
+      } catch (e) { /* file:// */ }
+      return false;
+    },
+
+    writeMusicMuted: function (v) {
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem(MUSIC_KEY, v ? '1' : '0');
+        }
+      } catch (e) { /* ignore */ }
+    },
+
+    isMusicMuted: function () { return !!this.musicMuted; },
+
+    setMusicMuted: function (v) {
+      const next = !!v;
+      this.musicMuted = next;
+      this.writeMusicMuted(next);
+      if (next) { this.stopBgm(); }
+      return this;
+    },
+
+    /** 背景音乐入口：目前没有曲目，开关先记账，以后接文件即可 */
+    playBgm: function () {
+      if (this.musicMuted) { return this; }
+      return this;
+    },
+
+    stopBgm: function () { return this; },
 
     setMuted: function (v) {
       const next = !!v;
@@ -346,6 +385,10 @@ window.FK = window.FK || {};
 
     explode_watermelon: function (sys, vol) {
       balloonPop(sys, vol, 'explode_watermelon', 0.25, 0.72);
+    },
+
+    explode_banana: function (sys, vol) {
+      balloonPop(sys, vol, 'explode_banana', 0.2, 0.62);
     },
 
     splash: function (sys, vol) {

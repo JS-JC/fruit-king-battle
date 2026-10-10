@@ -117,6 +117,14 @@ window.FK = window.FK || {};
       /** 拖拽是否已「拖出去」（用于「拖回单位 = 取消移动」的判定） */
       this.dragArmed = false;
 
+      this.paused = false;
+      this.pausePanel = null;
+
+      /** 玩家上一次操作过的单位 id（下一回合镜头优先跟它） */
+      this.lastPlayerUnitId = '';
+      /** 玩家回合开场镜头缓动目标（世界坐标） */
+      this._camFocus = null;
+
       /** 第 9 步：敌方（红色方）AI —— 决策主控 + 最近一次决策摘要（HUD / 自检用） */
       this.aiController = null;
       this.lastAiDecided = null;
@@ -165,6 +173,7 @@ window.FK = window.FK || {};
 
       this.buildBackdrop();
       this.buildMapPlaceholder();     // 第 4 步：地图可视化占位
+      this.setupWorldCamera();
       this.buildTurnHud();            // 第 10 步：FK.HUD（顶部回合条 + 倒计时环 + 切换提示）
       this.buildInfoRow();            // 标题 / 选中单位 / 配置摘要（HUD 已建则跳过）
       this.buildBottomPanel();        // 底部状态面板（HUD 已建则只保留版面常量）
@@ -173,6 +182,7 @@ window.FK = window.FK || {};
       this.setupTurnManager();        // 先有状态机，单位选择才能做阵营限制
 
       this.spawnUnits();              // 第 4 步：实例化 4 个单位并接入选区
+      this.snapCameraToAllies();
       this.setupAiming();             // 第 5 步：预测器 + 瞄准控制器 + 轨迹渲染器
       this.setupObstacles();          // 第 7 步：障碍物注册表（挂到预测器的碰撞世界）
       // 第 8 步：落水 / 死亡判定与胜负判定（必须晚于 setupAiming —— 水面来自 map.waterLevel）
@@ -185,7 +195,10 @@ window.FK = window.FK || {};
       this.setupMove();               // 第 8.5 步：单位移动 + 移动/投掷模式切换条
       this.setupAI();                 // 第 9 步：敌方 AI（必须晚于投掷 / 放置 / 移动 —— 它只调用它们的入口）
       this.setupResultPanel();        // 第 8 步：胜负结算界面（「再来一局」按钮）
-      this.setupAudio();              // 第 12 步：程序化音效 + 喇叭静音
+      this.setupAudio();              // 第 12 步：程序化音效
+      this.setupPause();              // 暂停：压暗 / 停表 / 音效与音乐开关
+      this.bindBananaDetonate();
+      this.pinHudLayer();
 
       this.refreshInfoRow();
       this.updateThrowHud();
@@ -212,6 +225,11 @@ window.FK = window.FK || {};
      */
     update(time, delta) {
       this.updateFps(delta);
+
+      if (this.paused) {
+        this.lastFrameTime = time;
+        return;
+      }
 
       const dt = this.computeRealDelta(time, delta);
 
@@ -255,6 +273,7 @@ window.FK = window.FK || {};
 
       // 第 6 步：投掷物飞行 / 引信 / 爆炸演出 / 结算兜底
       if (this.projectileController) { this.projectileController.update(dt); }
+      this.updateWorldCamera();
 
       // 第 7 步：障碍物生成动画（纯表现）
       if (this.obstacleRegistry) { this.obstacleRegistry.update(dt); }
@@ -304,6 +323,9 @@ window.FK = window.FK || {};
       this.lastAiActed = null;
       // 第 7.5 / 7 / 7.8 步：先摘事件监听与 UI，再清空障碍物与冷却，最后关掉投掷链路
       // 第 8 步：再补上结算界面 / 死亡动画 / 判定系统的清理
+      if (this.pausePanel) { this.pausePanel.destroy(); this.pausePanel = null; }
+      if (FK.Config && typeof FK.Config.setPaused === 'function') { FK.Config.setPaused(false); }
+      this.paused = false;
       if (this.hudView) { this.hudView.destroy(); this.hudView = null; }
       if (this.deathEffect) { this.deathEffect.destroy(); this.deathEffect = null; }
       if (this.placementController) { this.placementController.destroy(); this.placementController = null; }
@@ -326,6 +348,11 @@ window.FK = window.FK || {};
       this.lastVictory = null;
       this.lastVictoryPayload = null;
       if (this.turnManager) { this.turnManager.reset(); }
+      this.setEdgeCursor(0, 0);
+      if (this.edgeArrowGfx && typeof this.edgeArrowGfx.destroy === 'function') {
+        this.edgeArrowGfx.destroy();
+      }
+      this.edgeArrowGfx = null;
       if (FK.EventBus) { FK.EventBus.clear(); }
 
       this.disposables.forEach(function (d) {
@@ -367,6 +394,7 @@ window.FK = window.FK || {};
       FK.EventBus.on(E.PROJECTILE_EXPLODED, function (p) {
         const id = p && p.itemId;
         if (id === 'watermelon_bomb') { play('explode_watermelon'); }
+        else if (id === 'banana_bomb') { play('explode_banana'); }
         else { play('explode_cherry'); }
       }, this);
       FK.EventBus.on(E.UNIT_DROWNED, function () { play('splash'); }, this);
@@ -377,48 +405,137 @@ window.FK = window.FK || {};
       FK.EventBus.on(E.MOVE_END, function () { play('move'); }, this);
       FK.EventBus.on(E.TURN_SWITCH, function () { play('turn_switch'); }, this);
       FK.EventBus.on(E.SLOT_SELECTED, function () { play('click'); }, this);
-
-      this.buildMuteButton();
     }
 
-    drawMuteIcon(muted) {
-      const g = this.muteGfx;
+    setupPause() {
+      this.paused = false;
+      if (FK.Config && typeof FK.Config.setPaused === 'function') { FK.Config.setPaused(false); }
+      this._timerWasPaused = false;
+      if (FK.PausePanel) {
+        this.pausePanel = new FK.PausePanel(this, {
+          onResume: () => this.resumeBattle(),
+          onTitle: () => this.returnToTitle(),
+          onSfx: () => this.toggleSfxFromPause(),
+          onMusic: () => this.toggleMusicFromPause()
+        });
+      }
+      this.buildPauseButton();
+      const kb = this.input && this.input.keyboard;
+      if (kb && typeof kb.on === 'function') {
+        kb.on('keydown-ESC', this.onPauseKey, this);
+      }
+    }
+
+    buildPauseButton() {
+      const W = Config.CANVAS.width;
+      this.pauseGfx = this.add.graphics().setDepth(DEPTH.HUD + 2);
+      if (typeof this.pauseGfx.setScrollFactor === 'function') { this.pauseGfx.setScrollFactor(0); }
+      this.drawPauseIcon();
+      const zone = this.add.zone(W - 48, 41, 44, 44).setOrigin(0.5).setInteractive();
+      zone.setDepth(DEPTH.HUD + 3);
+      if (typeof zone.setScrollFactor === 'function') { zone.setScrollFactor(0); }
+      const self = this;
+      zone.on('pointerdown', function () {
+        self.togglePause();
+      });
+      this.pauseBtnZone = zone;
+      this.disposables.push(this.pauseGfx, zone);
+    }
+
+    drawPauseIcon() {
+      const g = this.pauseGfx;
       if (!g) { return; }
       const W = Config.CANVAS.width;
       const cx = W - 48;
       const cy = 41;
       g.clear();
-      g.fillStyle(muted ? 0x64748B : 0xFDE047, 1);
-      g.fillTriangle(cx - 10, cy, cx - 2, cy - 8, cx - 2, cy + 8);
-      g.fillRect(cx - 14, cy - 4, 6, 8);
-      g.lineStyle(2, muted ? 0x94A3B8 : 0xF8FAFC, 1);
-      g.beginPath();
-      g.arc(cx - 1, cy, 6, -0.6, 0.6, false);
-      g.strokePath();
-      if (muted) {
-        g.lineStyle(3, 0xEF4444, 1);
-        g.beginPath();
-        g.moveTo(cx - 16, cy - 12);
-        g.lineTo(cx + 12, cy + 12);
-        g.strokePath();
-      }
+      g.fillStyle(0x0F172A, 0.92);
+      g.fillRoundedRect(cx - 18, cy - 16, 36, 32, 8);
+      g.lineStyle(2, 0xFDE047, 1);
+      g.strokeRoundedRect(cx - 18, cy - 16, 36, 32, 8);
+      g.fillStyle(0xF8FAFC, 1);
+      g.fillRoundedRect(cx - 8, cy - 8, 5, 16, 2);
+      g.fillRoundedRect(cx + 3, cy - 8, 5, 16, 2);
     }
 
-    buildMuteButton() {
-      const W = Config.CANVAS.width;
+    onPauseKey() {
+      if (this.paused) {
+        this.resumeBattle();
+        return;
+      }
+      /* 瞄准 / 放置 / 移动规划里 Esc 是「取消」，不要顺手打开暂停把投掷锁死 */
+      if (this.aimController && typeof this.aimController.isAiming === 'function' &&
+          this.aimController.isAiming()) {
+        return;
+      }
+      const plc = this.placementController;
+      if (plc && ((typeof plc.isActive === 'function' && plc.isActive()) || plc.active)) {
+        return;
+      }
+      const mc = this.moveController;
+      if (mc && typeof mc.isPlanning === 'function' && mc.isPlanning()) {
+        return;
+      }
+      this.pauseBattle();
+    }
+
+    canPauseNow() {
+      if (this.isGameOver()) { return false; }
+      if (this.resultPanel && this.resultPanel.visible) { return false; }
+      return true;
+    }
+
+    togglePause() {
+      if (this.paused) { this.resumeBattle(); }
+      else { this.pauseBattle(); }
+    }
+
+    pauseBattle() {
+      if (this.paused || !this.canPauseNow()) { return; }
+      this.paused = true;
+      if (FK.Config && typeof FK.Config.setPaused === 'function') { FK.Config.setPaused(true); }
+      this._timerWasPaused = !!(this.turnManager && this.turnManager.isTimerPaused &&
+        this.turnManager.isTimerPaused());
+      if (this.turnManager && typeof this.turnManager.pauseTimer === 'function') {
+        this.turnManager.pauseTimer();
+      }
+      if (this.itemBar) { this.itemBar.setEnabled(false); }
+      if (this.pausePanel) { this.pausePanel.show(); }
+      if (FK.SoundSystem) { FK.SoundSystem.play('click'); }
+    }
+
+    resumeBattle() {
+      if (!this.paused) { return; }
+      this.paused = false;
+      if (FK.Config && typeof FK.Config.setPaused === 'function') { FK.Config.setPaused(false); }
+      if (this.pausePanel) { this.pausePanel.hide(); }
+      /* 只有单位还在跳时才继续冻表；否则必须恢复，避免暂停泄漏后永远投不出去 */
+      if (!this.isJumpHoldingTimer() && this.turnManager &&
+          typeof this.turnManager.resumeTimer === 'function') {
+        this.turnManager.resumeTimer();
+      }
+      this._timerWasPaused = false;
+      this.syncPlayerControls();
+    }
+
+    isJumpHoldingTimer() {
+      const mc = this.moveController;
+      if (!mc || typeof mc.getMovedUnit !== 'function') { return false; }
+      const u = mc.getMovedUnit();
+      return !!(u && (u.moving || u.airborne));
+    }
+
+    toggleSfxFromPause() {
       const S = FK.SoundSystem;
-      this.muteGfx = this.add.graphics().setDepth(DEPTH.HUD + 2);
-      this.drawMuteIcon(S && S.isMuted());
-      const zone = this.add.zone(W - 48, 41, 40, 40).setOrigin(0.5).setInteractive();
-      zone.setDepth(DEPTH.HUD + 3);
-      const self = this;
-      zone.on('pointerdown', function () {
-        if (!S) { return; }
-        S.unlock();
-        S.setMuted(!S.isMuted());
-        self.drawMuteIcon(S.isMuted());
-      });
-      this.disposables.push(this.muteGfx, zone);
+      if (!S) { return; }
+      S.unlock();
+      S.setMuted(!S.isMuted());
+    }
+
+    toggleMusicFromPause() {
+      const S = FK.SoundSystem;
+      if (!S || typeof S.setMusicMuted !== 'function') { return; }
+      S.setMusicMuted(!S.isMusicMuted());
     }
 
     subscribeTurnEvents() {
@@ -459,6 +576,10 @@ window.FK = window.FK || {};
       }
       this.showTeamToast(style.label, style.color);
       this.syncPlayerControls();
+      if (payload.team === this.getPlayerTeam()) {
+        this.restorePlayerThrowItem();
+        this.beginPlayerTurnCamera();
+      }
       this.refreshLogPanel();
     }
 
@@ -483,6 +604,9 @@ window.FK = window.FK || {};
       const aiTurn = !!(FK.Config && typeof FK.Config.isAiTurn === 'function' &&
         FK.Config.isAiTurn(this.turnManager));
       this.itemBar.setEnabled(!aiTurn);
+      if (!aiTurn && !this.itemBar.isMoveSlotActive()) {
+        this.applyItem(this.itemBar.getSelected());
+      }
     }
 
     onTurnTick(payload) {
@@ -812,7 +936,7 @@ window.FK = window.FK || {};
      *   数值来源：data/items.json → ItemConfig.cooldownTurns（水果箱 = 1）
      *   计时来源：既有 turn:end 事件（在 onTurnEnded 里按「刚行动的一方」推进）
      *   使用登记：既有 item:used 事件（投掷与放置两条路径都会发）
-     *   语义：第 N 个 turn 用了 → 该方第 N+2 个 turn（下次行动）不能用 → 第 N+4 恢复
+     *   语义：用完后冷却 cooldownTurns 个自己的行动回合（对方回合不扣）
      * ================================================================== */
 
     /** 创建冷却表；必须早于 setupPlacement / setupItemBar */
@@ -824,10 +948,21 @@ window.FK = window.FK || {};
       this.itemCooldown = new FK.ItemCooldown({ eventBus: FK.EventBus });
     }
 
-    /** 当前行动方的某道具剩余冷却（0 = 可用）；道具栏与 HUD 共用 */
+    /** 玩家阵营（道具栏始终按这个视角显示冷却） */
+    getPlayerTeam() {
+      return (FK.Config && FK.Config.VICTORY && FK.Config.VICTORY.playerTeam) || 'blue';
+    }
+
+    /** 玩家视角的某道具剩余冷却（0 = 可用）；道具栏与 HUD 共用，敌方回合也看玩家自己的冷却 */
     itemCooldownRemaining(itemId) {
-      if (!this.itemCooldown || !this.turnManager) { return 0; }
-      return this.itemCooldown.getRemaining(this.turnManager.getCurrentTeam(), itemId);
+      if (!this.itemCooldown) { return 0; }
+      return this.itemCooldown.getRemaining(this.getPlayerTeam(), itemId);
+    }
+
+    /** 指定阵营的道具冷却（AI 决策用，不能走玩家视角） */
+    itemCooldownRemainingFor(team, itemId) {
+      if (!this.itemCooldown) { return 0; }
+      return this.itemCooldown.getRemaining(team || '', itemId);
     }
 
     /**
@@ -987,7 +1122,7 @@ window.FK = window.FK || {};
       this.itemBar = new FK.ItemBar(this, {
         items: FK.Configs.items,
         depth: DEPTH.TOAST,
-        // 第 7.8 步：冷却中的格子显示为灰色 / 禁用，悬停提示「冷却中（还需 n 个 turn）」
+        // 第 7.8 步：冷却中的格子显示为灰色 / 禁用，悬停提示「冷却中」
         cooldown: (itemId) => this.itemCooldownRemaining(itemId),
         // 第 8.6 步：第 4 格「移动」每回合只能用一次（移完置灰，仍可投掷）
         canMove: () => !!(this.moveController && this.moveController.canUseMove()),
@@ -1001,7 +1136,7 @@ window.FK = window.FK || {};
 
       // 默认道具（cherry_bomb）下发：瞄准预警圈与力度系数立即生效
       this.applyItem(this.itemBar.getSelected());
-      this.log('道具栏就绪（4 格）：' + this.itemBar.ids().join(' / ') +
+      this.log('道具栏就绪（5 格）：' + this.itemBar.ids().join(' / ') +
         '，默认 ' + this.itemBar.getSelectedId());
     }
 
@@ -1041,6 +1176,7 @@ window.FK = window.FK || {};
           : '投掷，#projectile ' + payload.projectileId) + '）');
       // 第 7.8 步：按阵营登记该道具的冷却
       this.startItemCooldown(payload);
+      this.rememberPlayerUnitId(payload.unitId, payload.team);
       this.refreshLogPanel();
     }
 
@@ -1113,8 +1249,15 @@ window.FK = window.FK || {};
       });
 
       this.subscribeMoveEvents();
+      if (this.unitSelector && typeof this.unitSelector.setActionLockProvider === 'function') {
+        const self = this;
+        this.unitSelector.setActionLockProvider(function () {
+          return self.moveController && typeof self.moveController.getMovedUnit === 'function'
+            ? self.moveController.getMovedUnit() : null;
+        });
+      }
 
-      this.log('移动系统就绪：点道具栏第 4 格「移动」→ 拖拽己方单位起跳（每回合限一次，移完仍可投掷）');
+      this.log('移动系统就绪：点道具栏第 4 格「移动」→ 拖拽己方单位起跳（每回合限一次，移完只能由该单位投掷）');
     }
 
     /** 订阅移动事件：只用于日志与 HUD，不参与移动逻辑 */
@@ -1129,11 +1272,18 @@ window.FK = window.FK || {};
     onMoveEnd(payload) {
       if (FK.SoundSystem) { FK.SoundSystem.play('move'); }
       this.lastMoveEnd = payload;
+      const moved = this.moveController && typeof this.moveController.getMovedUnit === 'function'
+        ? this.moveController.getMovedUnit() : null;
+      if (moved && this.unitSelector && typeof this.unitSelector.select === 'function') {
+        this.unitSelector.select(moved);
+      }
+      this.rememberPlayerUnit(moved);
       const land = payload.landing
         ? ('(' + payload.landing.x + ',' + payload.landing.y + ')') : '-';
       this.log('move:end → ' + payload.unitId + ' 力度 ' + Math.round(payload.powerRatio * 100) +
         '% · 角度 ' + Math.round(payload.angleDeg) + '° · 速度 ' + Math.round(payload.speed) +
         'px/s · 预计落点 ' + land + ' · 弹回 ' + payload.bounces + ' 次（本回合行动已用）');
+      this.restoreThrowItemAfterMove();
       this.refreshLogPanel();
     }
 
@@ -1142,7 +1292,28 @@ window.FK = window.FK || {};
       this.log('move:complete → ' + payload.unitId + ' 位移 ' + payload.distance +
         'px（' + payload.distanceUnits + 'u）· 弹回 ' + payload.bounces + ' 次 · ' + payload.reason +
         ' → 本回合仍可投掷，但不能再次移动');
+      this.restoreThrowItemAfterMove();
       this.refreshLogPanel();
+    }
+
+    restoreThrowItemAfterMove() {
+      this.restorePlayerThrowItem('move-done');
+    }
+
+    /** 退出「移动」格，把瞄准/投掷切回玩家选中的投掷道具（AI 用过箱子后尤其需要） */
+    restorePlayerThrowItem(reason) {
+      if (!this.itemBar) { return; }
+      if (this.itemBar.isMoveSlotActive()) {
+        this.itemBar.setMoveSlotActive(false, {
+          silent: false, force: true, reason: reason || 'player-turn'
+        });
+      }
+      const id = this.itemBar.lastItemId || this.itemBar.getSelectedId() ||
+        ((FK.Config && FK.Config.AIM) ? FK.Config.AIM.defaultItemId : '');
+      if (id && id !== 'move') { this.itemBar.select(id, { force: true }); }
+      /* 栏上高亮没变时 select 不会广播，必须再 apply 一次：
+         AI 用过水果箱后瞄准还停在放置模式，看起来像投不出去。 */
+      this.applyItem(this.itemBar.getSelected() || this.pickDefaultItem());
     }
 
     onMoveCancel(payload) {
@@ -1435,9 +1606,9 @@ window.FK = window.FK || {};
       }
 
       const factories = FK.ModuleFactories && FK.ModuleFactories.map;
-      const make = factories && factories.fruit_king_arena;
+      const make = (factories && factories[map.id]) || (factories && factories.fruit_king_arena);
       if (typeof make !== 'function') {
-        console.error('[Battle] 缺少 fruit_king_arena 地图模块');
+        console.error('[Battle] 缺少地图模块：' + (map.id || ''));
         return;
       }
 
@@ -1581,7 +1752,7 @@ window.FK = window.FK || {};
 
       // 操作提示：左对齐（不再居中，避免长文案伸进右下角道具栏区域）
       h.hintText = this.add.text(panelX + 20, panelY + 8,
-        '悬停高亮 · 点击选中 · 拖拽选中单位瞄准 · 点第 4 格「移动」跳跃 · 拖回 / 右键 / ESC 取消', {
+        '悬停高亮 · 点击选中 · 拖拽选中单位瞄准 · 点第 5 格「移动」跳跃 · 香蕉弹飞行中左键引爆 · 拖回 / 右键 / ESC 取消', {
           fontFamily: '"Microsoft YaHei", sans-serif', fontSize: '14px', color: COLOR.label
         }).setOrigin(0, 0).setDepth(DEPTH.STATUS);
 
@@ -1729,8 +1900,9 @@ window.FK = window.FK || {};
         items: () => (FK.Configs && FK.Configs.items) || [],
         // 道具下发走场景的唯一入口：瞄准力度系数 / 预警圈 / 投掷模块 / 放置模式一起同步
         applyItem: (itemConfig) => this.applyItemForAi(itemConfig),
-        // 按阵营的道具冷却（AI 只在红方回合行动，因此这里拿到的就是红方口径）
-        cooldown: (itemId) => this.itemCooldownRemaining(itemId),
+        // AI 用自己阵营的冷却，不能走道具栏那套玩家视角
+        cooldown: (itemId) => this.itemCooldownRemainingFor(
+          (FK.Config.AI && FK.Config.AI.team) || 'red', itemId),
         canMove: () => !!(this.moveController && this.moveController.canUseMove())
       });
 
@@ -1747,9 +1919,7 @@ window.FK = window.FK || {};
      */
     applyItemForAi(itemConfig) {
       this.applyItem(itemConfig);
-      if (this.itemBar && itemConfig && itemConfig.id && !this.itemBar.isMoveSlotActive()) {
-        this.itemBar.select(itemConfig.id, { silent: true, force: true });
-      }
+      // 道具栏保持玩家选中态；真正轮到玩家时再 restorePlayerThrowItem
     }
 
     /** 订阅 AI 事件：只用于日志与 HUD，不参与 AI 逻辑 */
@@ -1865,6 +2035,10 @@ window.FK = window.FK || {};
     }
 
     returnToTitle() {
+      if (this.paused) {
+        this.paused = false;
+        if (FK.Config && typeof FK.Config.setPaused === 'function') { FK.Config.setPaused(false); }
+      }
       this.scene.start('Boot');
     }
 
@@ -2012,6 +2186,11 @@ window.FK = window.FK || {};
     }
 
     enterGameOver(result) {
+      if (this.paused) {
+        this.paused = false;
+        if (FK.Config && typeof FK.Config.setPaused === 'function') { FK.Config.setPaused(false); }
+        if (this.pausePanel) { this.pausePanel.hide(); }
+      }
       if (this.aimController && typeof this.aimController.isAiming === 'function' && this.aimController.isAiming()) {
         this.aimController.cancelAim('game-over');
       }
@@ -2086,6 +2265,11 @@ window.FK = window.FK || {};
     restartBattle() {
       if (!this.turnManager) { return false; }
       if (FK.SoundSystem) { FK.SoundSystem.play('click'); }
+      if (this.paused) {
+        this.paused = false;
+        if (FK.Config && typeof FK.Config.setPaused === 'function') { FK.Config.setPaused(false); }
+        if (this.pausePanel) { this.pausePanel.hide(); }
+      }
       this.log('再来一局：重置对局');
 
       // ① 停掉进行中的一切（死亡动画 / 瞄准 / 放置 / 投掷 / 移动 / 木箱 / 冷却 / 结算界面）
@@ -2142,6 +2326,9 @@ window.FK = window.FK || {};
       // ④ 回合复位：第 1 回合、蓝方先手、TURN_START → SELECT_UNIT
       this.turnManager.reset();
       this.turnManager.start();
+      this.lastPlayerUnitId = '';
+      this._camFocus = null;
+      this.snapCameraToAllies();
 
       this.refreshInfoRow();
       this.refreshLogPanel();
@@ -2235,6 +2422,391 @@ window.FK = window.FK || {};
       const veil = this.add.rectangle(W * 0.5, H * 0.5, W, H, 0x000000, 0.35);
       veil.setDepth(-99);
       veil.setScrollFactor(0);
+    }
+
+    setupWorldCamera() {
+      const map = (FK.Configs && FK.Configs.map) || null;
+      const cam = this.cameras && this.cameras.main;
+      if (!map || !cam || typeof cam.setBounds !== 'function') { return; }
+      const ox = (Config.ARENA && Config.ARENA.offsetX) || 80;
+      const worldW = Math.max(Config.CANVAS.width, Config.arenaX(map.width) + ox);
+      const worldH = Math.max(Config.CANVAS.height, Config.arenaY(map.height) + 80);
+      cam.setBounds(0, 0, worldW, worldH);
+      if (typeof cam.stopFollow === 'function') { cam.stopFollow(); }
+      this._camFollow = null;
+      if (!this.edgeArrowGfx && this.add && typeof this.add.graphics === 'function') {
+        const CC = Config.CAMERA || {};
+        this.edgeArrowGfx = this.add.graphics();
+        if (typeof this.edgeArrowGfx.setDepth === 'function') {
+          this.edgeArrowGfx.setDepth(CC.arrowDepth || 72);
+        }
+        if (typeof this.edgeArrowGfx.setScrollFactor === 'function') {
+          this.edgeArrowGfx.setScrollFactor(0);
+        }
+      }
+    }
+
+    snapCameraToAllies() {
+      const cam = this.cameras && this.cameras.main;
+      if (!cam || typeof cam.centerOn !== 'function') { return; }
+      const playerTeam = (Config.VICTORY && Config.VICTORY.playerTeam) || 'blue';
+      let target = null;
+      const list = this.units || [];
+      for (let i = 0; i < list.length; i++) {
+        const u = list[i];
+        const team = u && (typeof u.getTeam === 'function' ? u.getTeam() : u.team);
+        if (team === playerTeam) { target = u; break; }
+      }
+      if (!target) { target = list[0]; }
+      if (target) { cam.centerOn(target.x, target.y); }
+    }
+
+    rememberPlayerUnit(unit) {
+      if (!unit) { return; }
+      const id = (typeof unit.getId === 'function') ? unit.getId() : (unit.unitId || '');
+      const team = (typeof unit.getTeam === 'function') ? unit.getTeam() : unit.team;
+      this.rememberPlayerUnitId(id, team);
+    }
+
+    rememberPlayerUnitId(unitId, team) {
+      if (!unitId) { return; }
+      if (team && team !== this.getPlayerTeam()) { return; }
+      const u = this.findLivingUnitById(unitId);
+      if (u && this.unitTeamOf(u) !== this.getPlayerTeam()) { return; }
+      this.lastPlayerUnitId = unitId;
+    }
+
+    unitTeamOf(unit) {
+      if (!unit) { return ''; }
+      return (typeof unit.getTeam === 'function') ? unit.getTeam() : (unit.team || '');
+    }
+
+    isUnitAlive(unit) {
+      if (!unit || unit.removed) { return false; }
+      if (typeof unit.isAlive === 'function') { return !!unit.isAlive(); }
+      return true;
+    }
+
+    findLivingUnitById(unitId) {
+      if (!unitId) { return null; }
+      const list = this.units || [];
+      for (let i = 0; i < list.length; i++) {
+        const u = list[i];
+        const id = u && (typeof u.getId === 'function' ? u.getId() : u.unitId);
+        if (id === unitId && this.isUnitAlive(u)) { return u; }
+      }
+      return null;
+    }
+
+    livingPlayerUnits() {
+      const team = this.getPlayerTeam();
+      const out = [];
+      const list = this.units || [];
+      for (let i = 0; i < list.length; i++) {
+        const u = list[i];
+        if (this.isUnitAlive(u) && this.unitTeamOf(u) === team) { out.push(u); }
+      }
+      return out;
+    }
+
+    nearestPlayerUnitToCamera() {
+      const cam = this.cameras && this.cameras.main;
+      const allies = this.livingPlayerUnits();
+      if (!allies.length) { return null; }
+      if (!cam) { return allies[0]; }
+      const cx = (cam.scrollX || 0) + (cam.width || Config.CANVAS.width) / 2;
+      const cy = (cam.scrollY || 0) + (cam.height || Config.CANVAS.height) / 2;
+      let best = allies[0];
+      let bestD = Infinity;
+      for (let i = 0; i < allies.length; i++) {
+        const u = allies[i];
+        const d = Math.hypot((u.x || 0) - cx, (u.y || 0) - cy);
+        if (d < bestD) {
+          bestD = d;
+          best = u;
+        }
+      }
+      return best;
+    }
+
+    pickPlayerTurnCameraUnit() {
+      const last = this.findLivingUnitById(this.lastPlayerUnitId);
+      if (last && this.unitTeamOf(last) === this.getPlayerTeam()) { return last; }
+      return this.nearestPlayerUnitToCamera();
+    }
+
+    beginPlayerTurnCamera() {
+      const unit = this.pickPlayerTurnCameraUnit();
+      if (!unit) { return; }
+      this._camFocus = { unit: unit };
+      if (this.unitSelector && typeof this.unitSelector.select === 'function') {
+        this.unitSelector.select(unit);
+      }
+    }
+
+    readEdgePanDir(pointer) {
+      const CC = Config.CAMERA || {};
+      const edge = Math.max(16, CC.edgePx || 44);
+      const W = Config.CANVAS.width;
+      const H = Config.CANVAS.height;
+      const x = pointer.x;
+      const y = pointer.y;
+      let nx = 0;
+      let ny = 0;
+      if (x <= edge) { nx = -1; }
+      else if (x >= W - edge) { nx = 1; }
+      if (y <= edge) { ny = -1; }
+      else if (y >= H - edge) { ny = 1; }
+      return { nx: nx, ny: ny };
+    }
+
+    setEdgeCursor(nx, ny) {
+      const key = nx + ',' + ny;
+      if (this._edgeCursorKey === key) { return; }
+      this._edgeCursorKey = key;
+      const map = {
+        '-1,0': 'w-resize',
+        '1,0': 'e-resize',
+        '0,-1': 'n-resize',
+        '0,1': 's-resize',
+        '-1,-1': 'nw-resize',
+        '1,-1': 'ne-resize',
+        '-1,1': 'sw-resize',
+        '1,1': 'se-resize'
+      };
+      const cur = map[key] || 'default';
+      if (this.input && typeof this.input.setDefaultCursor === 'function') {
+        this.input.setDefaultCursor(cur);
+      }
+    }
+
+    drawEdgeArrow(nx, ny) {
+      const g = this.edgeArrowGfx;
+      if (!g || typeof g.clear !== 'function') { return; }
+      g.clear();
+      if (!nx && !ny) { return; }
+      const CC = Config.CAMERA || {};
+      const size = CC.arrowSize || 54;
+      const W = Config.CANVAS.width;
+      const H = Config.CANVAS.height;
+      const pad = 18;
+      let cx = W / 2;
+      let cy = H / 2;
+      if (nx < 0) { cx = pad + size / 2; }
+      else if (nx > 0) { cx = W - pad - size / 2; }
+      if (ny < 0) { cy = pad + size / 2 + 56; }
+      else if (ny > 0) { cy = H - pad - size / 2; }
+      if (!nx) { cx = W / 2; }
+      if (!ny) { cy = H / 2; }
+      if (ny < 0 && !nx) { cy = 92; }
+      if (ny > 0 && !nx) { cy = H - 36; }
+      const half = size / 2;
+      g.fillStyle(0x0F172A, 0.82);
+      g.fillRoundedRect(cx - half, cy - half, size, size, 12);
+      g.lineStyle(3, 0xFDE047, 1);
+      g.strokeRoundedRect(cx - half, cy - half, size, size, 12);
+      const ang = Math.atan2(ny, nx);
+      const r = size * 0.28;
+      const tipX = cx + Math.cos(ang) * r * 1.15;
+      const tipY = cy + Math.sin(ang) * r * 1.15;
+      const bx = cx - Math.cos(ang) * r * 0.7;
+      const by = cy - Math.sin(ang) * r * 0.7;
+      const px = -Math.sin(ang) * r * 0.85;
+      const py = Math.cos(ang) * r * 0.85;
+      g.fillStyle(0xFDE047, 1);
+      g.fillTriangle(tipX, tipY, bx + px, by + py, bx - px, by - py);
+    }
+
+    findCameraFollowTarget() {
+      const pc = this.projectileController;
+      if (pc && typeof pc.getExplosion === 'function') {
+        const ex = pc.getExplosion();
+        if (ex && !ex.destroyed && !(typeof ex.isFinished === 'function' && ex.isFinished())) {
+          return ex;
+        }
+      }
+      if (pc && typeof pc.getProjectile === 'function') {
+        const p = pc.getProjectile();
+        const flying = !!(p && !p.removed && !(typeof p.hasLanded === 'function' && p.hasLanded()));
+        if (flying) { return p; }
+      }
+      const plc = this.placementController;
+      if (plc && plc.fall && typeof plc.fall.x === 'number' && typeof plc.fall.y === 'number') {
+        return plc.fall;
+      }
+      return this.findMotionUnit();
+    }
+
+    findMotionUnit() {
+      const list = this.units || [];
+      let best = null;
+      let bestScore = 0;
+      for (let i = 0; i < list.length; i++) {
+        const u = list[i];
+        if (!u || u.removed) { continue; }
+        const moving = (typeof u.isMoving === 'function') ? u.isMoving() : !!u.moving;
+        const airborne = !!u.airborne;
+        const kvx = u.knockbackVx || 0;
+        const kvy = u.knockbackVy || 0;
+        const mvx = u.moveVx || 0;
+        const mvy = u.moveVy || 0;
+        let score = 0;
+        if (moving) { score = 2000 + Math.hypot(mvx, mvy); }
+        else if (airborne) { score = 1000 + Math.hypot(kvx, kvy); }
+        else if (Math.abs(kvx) > 12) { score = 200 + Math.abs(kvx); }
+        if (score > bestScore) {
+          bestScore = score;
+          best = u;
+        }
+      }
+      return best;
+    }
+
+    followMotionCamera(unit) {
+      const cam = this.cameras && this.cameras.main;
+      if (!cam || !unit) { return; }
+      const CC = Config.CAMERA || {};
+      const lerp = (typeof CC.followLerp === 'number') ? CC.followLerp : 0.16;
+      this.setEdgeCursor(0, 0);
+      this.drawEdgeArrow(0, 0);
+      const x = (typeof unit.x === 'number') ? unit.x : (unit.center && unit.center.x);
+      const y = (typeof unit.y === 'number') ? unit.y : (unit.center && unit.center.y);
+      /* 爆炸是短命 Container，startFollow 会在销毁后把镜头坐标打坏，点不到单位 */
+      const followObj = (typeof unit.isFinished !== 'function');
+      if (followObj && typeof cam.startFollow === 'function') {
+        if (this._camFollow !== unit) {
+          cam.startFollow(unit, true, lerp, lerp);
+          this._camFollow = unit;
+        }
+        return;
+      }
+      if (this._camFollow) {
+        if (typeof cam.stopFollow === 'function') { cam.stopFollow(); }
+        this._camFollow = null;
+      }
+      if (typeof cam.centerOn === 'function' && typeof x === 'number' && typeof y === 'number') {
+        cam.centerOn(x, y);
+      }
+    }
+
+    updateWorldCamera() {
+      const cam = this.cameras && this.cameras.main;
+      if (!cam) { return; }
+      const target = this.findCameraFollowTarget();
+      if (target) {
+        this._camFocus = null;
+        this.followMotionCamera(target);
+        return;
+      }
+      if (this._camFollow) {
+        if (typeof cam.stopFollow === 'function') { cam.stopFollow(); }
+        this._camFollow = null;
+      }
+      if (this._camFocus) {
+        const pointer = this.input && this.input.activePointer;
+        const overCanvas = !!(this.input && this.input.isOver);
+        if (pointer && overCanvas && !(this.itemBar && this.itemBar.hitTest &&
+            this.itemBar.hitTest(pointer.x, pointer.y))) {
+          const dir = this.readEdgePanDir(pointer);
+          if (dir.nx || dir.ny) { this._camFocus = null; }
+        }
+      }
+      if (this._camFocus) {
+        const focusUnit = this._camFocus.unit;
+        if (!this.isUnitAlive(focusUnit)) {
+          this._camFocus = null;
+        } else {
+        const viewW = cam.width || Config.CANVAS.width;
+        const viewH = cam.height || Config.CANVAS.height;
+        const tx = focusUnit.x - viewW / 2;
+        const ty = focusUnit.y - viewH / 2;
+        const CC = Config.CAMERA || {};
+        const lerp = (typeof CC.turnFocusLerp === 'number') ? CC.turnFocusLerp : 0.14;
+        cam.scrollX += (tx - cam.scrollX) * lerp;
+        cam.scrollY += (ty - cam.scrollY) * lerp;
+        const dist = Math.hypot(tx - cam.scrollX, ty - cam.scrollY);
+        this.setEdgeCursor(0, 0);
+        this.drawEdgeArrow(0, 0);
+        if (dist < 6) { this._camFocus = null; }
+        return;
+        }
+      }
+      const pointer = this.input && this.input.activePointer;
+      const overCanvas = !!(this.input && this.input.isOver);
+      if (!pointer || !overCanvas) {
+        this.setEdgeCursor(0, 0);
+        this.drawEdgeArrow(0, 0);
+        return;
+      }
+      if (this.resultPanel && this.resultPanel.visible) {
+        this.setEdgeCursor(0, 0);
+        this.drawEdgeArrow(0, 0);
+        return;
+      }
+      if (this.itemBar && typeof this.itemBar.hitTest === 'function' &&
+          this.itemBar.hitTest(pointer.x, pointer.y)) {
+        this.setEdgeCursor(0, 0);
+        this.drawEdgeArrow(0, 0);
+        return;
+      }
+      const bounds = (typeof cam.getBounds === 'function') ? cam.getBounds() : null;
+      const viewW = cam.width || Config.CANVAS.width;
+      const viewH = cam.height || Config.CANVAS.height;
+      const canPanX = !bounds || bounds.width > viewW + 2;
+      const canPanY = !bounds || bounds.height > viewH + 2;
+      if (!canPanX && !canPanY) {
+        this.setEdgeCursor(0, 0);
+        this.drawEdgeArrow(0, 0);
+        return;
+      }
+      const dir = this.readEdgePanDir(pointer);
+      let nx = canPanX ? dir.nx : 0;
+      let ny = canPanY ? dir.ny : 0;
+      this.setEdgeCursor(nx, ny);
+      this.drawEdgeArrow(nx, ny);
+      if (!nx && !ny) { return; }
+      const CC = Config.CAMERA || {};
+      const delta = this.sys && this.sys.game && this.sys.game.loop ? this.sys.game.loop.delta : 16.6;
+      const sec = Math.min(0.05, Math.max(0, (delta || 16.6) / 1000));
+      const speed = CC.panSpeed || 860;
+      cam.scrollX += nx * speed * sec;
+      cam.scrollY += ny * speed * sec;
+    }
+
+    bindBananaDetonate() {
+      if (!this.input || typeof this.input.on !== 'function') { return; }
+      const self = this;
+      this.input.on('pointerdown', function (pointer) {
+        if (!pointer) { return; }
+        if (typeof pointer.rightButtonDown === 'function' && pointer.rightButtonDown()) { return; }
+        if (pointer.button && pointer.button !== 0) { return; }
+        if (pointer.y < 90) { return; }
+        if (self.paused) { return; }
+        if (self.resultPanel && self.resultPanel.visible) { return; }
+        if (self.itemBar && typeof self.itemBar.hitTest === 'function' &&
+            self.itemBar.hitTest(pointer.x, pointer.y)) { return; }
+        const playerTeam = (Config.VICTORY && Config.VICTORY.playerTeam) || 'blue';
+        if (self.projectileController) {
+          self.projectileController.tryManualDetonate({ team: playerTeam });
+        }
+      });
+    }
+
+    pinHudLayer() {
+      const list = this.children && this.children.list;
+      if (!list) { return; }
+      for (let i = 0; i < list.length; i++) {
+        const o = list[i];
+        if (o && typeof o.setScrollFactor === 'function' && (o.depth || 0) >= 48) {
+          o.setScrollFactor(0);
+        }
+      }
+      if (this.pauseGfx && typeof this.pauseGfx.setScrollFactor === 'function') {
+        this.pauseGfx.setScrollFactor(0);
+      }
+      if (this.pauseBtnZone && typeof this.pauseBtnZone.setScrollFactor === 'function') {
+        this.pauseBtnZone.setScrollFactor(0);
+      }
     }
 
     log(msg) {

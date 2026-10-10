@@ -3,8 +3,8 @@
  * ItemBar.js —— 道具栏 UI（第 7 步新增；第 8.6 步并入「移动」格）
  * ============================================================
  * 职责：
- *   在画布底部横排显示 **4 个格子**（第 8.6 步起）：
- *     [樱桃炸弹] [西瓜炸弹] [水果箱] [移动]
+ *   在画布底部横排显示 **5 个格子**（第 14 步起）：
+ *     [樱桃炸弹] [西瓜炸弹] [香蕉弹] [水果箱] [移动]
  *   提供「当前选中高亮 / 悬停显示名称 / 点击切换」三件事，并把选择结果
  *   通过事件广播出去。
  *
@@ -54,27 +54,52 @@ window.FK = window.FK || {};
 
   /** 布局常量（画布逻辑像素） */
   const LAYOUT = {
-    slotW: 96,
-    slotH: 96,
-    gap: 10,
+    slotW: 88,
+    slotH: 88,
+    gap: 8,
     selectedScale: 1.08,
     /** 底栏相对画布右下角的边距 */
     marginRight: 28,
     marginBottom: 104,
-    tipAbovePx: 12
+    tipAbovePx: 12,
+    tipPadX: 16,
+    tipPadY: 8,
+    tipMinW: 88,
+    tipMinH: 32
   };
 
   /** 第 8.6 步：「移动」格的虚拟槽位定义（不是 ItemConfig，不参与道具冷却 / 消费） */
   const MOVE_SLOT = Object.freeze({
     id: 'move',
     name: '移动',
-    desc: '拖拽单位跳向目标点（每回合限一次，移完仍可投掷）',
+    desc: '跳跃移动，每回合一次',
     type: 'move',
     isMoveSlot: true
   });
 
   function num(v, def) {
     return (typeof v === 'number' && isFinite(v)) ? v : def;
+  }
+
+  /** 气泡宽度：优先用 Phaser 实测，自检环境按中文 14px / 英文 8px 估算 */
+  function measureTipText(textObj, str) {
+    const s = str || '';
+    if (textObj) {
+      const pw = num(textObj.width, 0);
+      const ph = num(textObj.height, 0);
+      if (pw > 0) { return { w: pw, h: ph > 0 ? ph : 18 }; }
+      if (typeof textObj.getBounds === 'function') {
+        const b = textObj.getBounds();
+        if (b && num(b.width, 0) > 0) {
+          return { w: b.width, h: num(b.height, 0) > 0 ? b.height : 18 };
+        }
+      }
+    }
+    let w = 0;
+    for (let i = 0; i < s.length; i++) {
+      w += (s.charCodeAt(i) > 127) ? 14 : 8;
+    }
+    return { w: w, h: 18 };
   }
 
   class ItemBar {
@@ -110,6 +135,7 @@ window.FK = window.FK || {};
 
       const defaultId = (FK.Config && FK.Config.AIM) ? FK.Config.AIM.defaultItemId : '';
       this.selectedId = opts.selectedId || defaultId || (this.items[0] ? this.items[0].id : '');
+      this.lastItemId = this.selectedId;
 
       /** 渲染深度：HUD 之下、场景之上 */
       this.depth = num(opts.depth, 55);
@@ -174,9 +200,11 @@ window.FK = window.FK || {};
         if (canDraw) {
           slot.gfx = this.scene.add.graphics();
           if (typeof slot.gfx.setDepth === 'function') { slot.gfx.setDepth(this.depth); }
+          if (typeof slot.gfx.setScrollFactor === 'function') { slot.gfx.setScrollFactor(0); }
 
           slot.iconGfx = this.scene.add.graphics();
           if (typeof slot.iconGfx.setDepth === 'function') { slot.iconGfx.setDepth(this.depth + 1); }
+          if (typeof slot.iconGfx.setScrollFactor === 'function') { slot.iconGfx.setScrollFactor(0); }
 
           if (typeof this.scene.add.text === 'function') {
             slot.label = this.scene.add.text(x + LAYOUT.slotW / 2, y + LAYOUT.slotH - 14,
@@ -187,6 +215,7 @@ window.FK = window.FK || {};
               });
             if (typeof slot.label.setOrigin === 'function') { slot.label.setOrigin(0.5, 0.5); }
             if (typeof slot.label.setDepth === 'function') { slot.label.setDepth(this.depth + 2); }
+            if (typeof slot.label.setScrollFactor === 'function') { slot.label.setScrollFactor(0); }
 
             // 第 7.8 步：冷却剩余回合文本（默认隐藏）
             slot.cdText = this.scene.add.text(x + LAYOUT.slotW / 2, y + LAYOUT.slotH / 2 - 2, '', {
@@ -198,6 +227,7 @@ window.FK = window.FK || {};
             if (typeof slot.cdText.setOrigin === 'function') { slot.cdText.setOrigin(0.5, 0.5); }
             if (typeof slot.cdText.setDepth === 'function') { slot.cdText.setDepth(this.depth + 3); }
             if (typeof slot.cdText.setVisible === 'function') { slot.cdText.setVisible(false); }
+            if (typeof slot.cdText.setScrollFactor === 'function') { slot.cdText.setScrollFactor(0); }
           }
         }
 
@@ -426,18 +456,34 @@ window.FK = window.FK || {};
         g.strokeRoundedRect(cx - r, cy - r, r * 2, r * 2, 4);
       } else {
         // 炸弹：圆身 + 引线 + 高光；西瓜（半径 ≥3）用绿皮红瓤区分
-        const isMelon = num(item.radius, 0) >= 3;
-        g.fillStyle(isMelon ? 0x16A34A : 0xDC2626, 1);
-        g.fillCircle(cx, cy, r);
-        g.lineStyle(2, isMelon ? 0x065F46 : 0x7F1D1D, 1);
-        g.strokeCircle(cx, cy, r);
-        g.fillStyle(0xFCA5A5, 0.85);
-        g.fillCircle(cx - r * 0.3, cy - r * 0.3, r * 0.3);
-        g.lineStyle(2, 0x78350F, 1);
-        g.beginPath();
-        g.moveTo(cx, cy - r);
-        g.lineTo(cx + 3, cy - r - 7);
-        g.strokePath();
+        const isBanana = item.id === 'banana_bomb';
+        const isMelon = !isBanana && num(item.radius, 0) >= 3;
+        if (isBanana) {
+          g.fillStyle(0xFACC15, 1);
+          g.fillCircle(cx - 8, cy + 4, 11);
+          g.fillCircle(cx, cy - 2, 12);
+          g.fillCircle(cx + 9, cy + 5, 11);
+          g.lineStyle(2, 0xCA8A04, 1);
+          g.beginPath();
+          g.moveTo(cx - 14, cy + 4);
+          g.lineTo(cx, cy - 12);
+          g.lineTo(cx + 14, cy + 6);
+          g.strokePath();
+          g.fillStyle(0x78350F, 1);
+          g.fillCircle(cx - 16, cy + 6, 3);
+        } else {
+          g.fillStyle(isMelon ? 0x16A34A : 0xDC2626, 1);
+          g.fillCircle(cx, cy, r);
+          g.lineStyle(2, isMelon ? 0x065F46 : 0x7F1D1D, 1);
+          g.strokeCircle(cx, cy, r);
+          g.fillStyle(0xFCA5A5, 0.85);
+          g.fillCircle(cx - r * 0.3, cy - r * 0.3, r * 0.3);
+          g.lineStyle(2, 0x78350F, 1);
+          g.beginPath();
+          g.moveTo(cx, cy - r);
+          g.lineTo(cx + 3, cy - r - 7);
+          g.strokePath();
+        }
       }
       if (active && typeof g.setAlpha === 'function') { g.setAlpha(1); }
     }
@@ -449,6 +495,7 @@ window.FK = window.FK || {};
 
       this.tipBg = this.scene.add.graphics();
       if (this.tipBg.setDepth) { this.tipBg.setDepth(this.depth + 3); }
+      if (this.tipBg.setScrollFactor) { this.tipBg.setScrollFactor(0); }
       this.tipBg.setVisible(false);
 
       if (this.scene.add.text) {
@@ -457,8 +504,9 @@ window.FK = window.FK || {};
           fontSize: '14px',
           color: COLOR.tipText
         });
-        if (this.tipText.setOrigin) { this.tipText.setOrigin(0.5, 1); }
+        if (this.tipText.setOrigin) { this.tipText.setOrigin(0.5, 0.5); }
         if (this.tipText.setDepth) { this.tipText.setDepth(this.depth + 4); }
+        if (this.tipText.setScrollFactor) { this.tipText.setScrollFactor(0); }
         this.tipText.setVisible(false);
       }
       return this;
@@ -470,7 +518,7 @@ window.FK = window.FK || {};
 
     /**
      * 悬停：显示名称 + 描述
-     *   第 7.8 步：冷却中追加「冷却中 · 剩余 n 个 turn」
+     *   第 7.8 步：冷却中追加「冷却中」
      *   第 8.6 步：第 4 格「移动」追加「本回合已移动」状态
      */
     showTip(itemId) {
@@ -483,28 +531,33 @@ window.FK = window.FK || {};
       let text;
       if (slot.isMoveSlot) {
         text = (item.name || itemId) + (item.desc ? ' · ' + item.desc : '') +
-          (this.isMoveUsed() ? ' · 本回合已移动，不能再移动' : '');
+          (this.isMoveUsed() ? ' · 本回合已移动' : '');
       } else {
         const cd = this.getCooldownRemaining(itemId);
         text = (item.name || itemId) + (item.desc ? ' · ' + item.desc : '') +
-          (cd > 0 ? ' · 冷却中（还需 ' + cd + ' 个 turn）' : '');
+          (cd > 0 ? ' · 冷却中' : '');
       }
       this.tipText.setText(text);
       slot.tipText = text;
 
-      const w = Math.max(160, text.length * 9 + 24);
-      const h = 30;
-      const cx = slot.x + LAYOUT.slotW / 2;
-      const cy = slot.y - LAYOUT.tipAbovePx;
+      const size = measureTipText(this.tipText, text);
+      const w = Math.max(LAYOUT.tipMinW, size.w + LAYOUT.tipPadX * 2);
+      const h = Math.max(LAYOUT.tipMinH, size.h + LAYOUT.tipPadY * 2);
+      const canvasW = (FK.Config && FK.Config.CANVAS) ? FK.Config.CANVAS.width : 1600;
+      let left = slot.x + LAYOUT.slotW / 2 - w / 2;
+      if (left < 8) { left = 8; }
+      if (left + w > canvasW - 8) { left = canvasW - 8 - w; }
+      const cx = left + w / 2;
+      const bottom = slot.y - LAYOUT.tipAbovePx;
       const warn = slot.isMoveSlot ? this.isMoveUsed() : (this.getCooldownRemaining(itemId) > 0);
 
       this.tipBg.clear();
       this.tipBg.fillStyle(COLOR.tipBg, 0.96);
-      this.tipBg.fillRoundedRect(cx - w / 2, cy - h, w, h, 8);
+      this.tipBg.fillRoundedRect(left, bottom - h, w, h, 8);
       this.tipBg.lineStyle(2, warn ? COLOR.slotCooling : COLOR.slotBorder, 1);
-      this.tipBg.strokeRoundedRect(cx - w / 2, cy - h, w, h, 8);
+      this.tipBg.strokeRoundedRect(left, bottom - h, w, h, 8);
       this.tipBg.setVisible(true);
-      this.tipText.setPosition(cx, cy - h / 2);
+      this.tipText.setPosition(cx, bottom - h / 2);
       this.tipText.setVisible(true);
       return this;
     }
@@ -521,8 +574,8 @@ window.FK = window.FK || {};
     /** 指针按下（整栏兜底：不在 Zone 上也支持按坐标判定） */
     onPointerDown(pointer) {
       if (!pointer || !this.enabled) { return false; }
-      const hit = this.hitTest(num(pointer.worldX, num(pointer.x, -1)),
-        num(pointer.worldY, num(pointer.y, -1)));
+      if (FK.Config && typeof FK.Config.isPaused === 'function' && FK.Config.isPaused()) { return false; }
+      const hit = this.hitTest(num(pointer.x, -1), num(pointer.y, -1));
       if (!hit) { return false; }
       return this.select(hit.item ? hit.item.id : '');
     }
@@ -530,8 +583,8 @@ window.FK = window.FK || {};
     /** 指针移动（整栏兜底：悬停判定） */
     onPointerMove(pointer) {
       if (!pointer) { return false; }
-      const hit = this.hitTest(num(pointer.worldX, num(pointer.x, -1)),
-        num(pointer.worldY, num(pointer.y, -1)));
+      if (FK.Config && typeof FK.Config.isPaused === 'function' && FK.Config.isPaused()) { return false; }
+      const hit = this.hitTest(num(pointer.x, -1), num(pointer.y, -1));
       if (hit) { return this.showTip(hit.item ? hit.item.id : ''); }
       if (this.hoveredId) { return this.onPointerOut(); }
       return false;
@@ -575,6 +628,7 @@ window.FK = window.FK || {};
         // 选中移动会占用本回合的移动次数 → 先清掉道具选中态（投掷与移动不再并存）
         if (this.selectedId) {
           const previous = this.selectedId;
+          this.lastItemId = previous;
           this.selectedId = '';
           if (!o.silent) {
             this.emit((FK.EVENTS && FK.EVENTS.SLOT_SELECTED) || 'slot:selected', {
@@ -602,6 +656,7 @@ window.FK = window.FK || {};
 
       const previousId = this.selectedId;
       this.selectedId = slotId;
+      this.lastItemId = slotId;
       this.refresh();
 
       if (!o.silent) {

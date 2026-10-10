@@ -237,4 +237,11 @@ FK.ModuleFactories.map = FK.ModuleFactories.map || {};
       }
     };
   };
+
+  FK.ModuleFactories.map.jam_canyon = function createJamCanyonModule() {
+    const inner = FK.ModuleFactories.map.fruit_king_arena();
+    inner.id = 'jam_canyon';
+    inner.displayName = '果酱峡谷';
+    return inner;
+  };
 })();

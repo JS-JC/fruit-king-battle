@@ -3,7 +3,7 @@
  * Explosion.js —— 爆炸演出实体（第 6 步新增）
  * ============================================================
  * 职责：
- *   纯表现层：在爆心画一个半透明橙色圆，
+ *   纯表现层：在爆心画扩散圆（樱桃红 / 西瓜绿 / 香蕉黄），
  *   从 0 放大到爆炸半径（ItemConfig.radius × pxPerUnit），
  *   在 explodeAnimMs 内淡出，然后自毁。
  *
@@ -31,21 +31,21 @@ window.FK = window.FK || {};
   const COLOR = {
     fill: 0xF97316,
     fillCore: 0xFDE047,
-    stroke: 0xFB923C,
+    stroke: 0xFDE047,
     ring: 0xFDBA74,
     core: 0xFFFFFF,
-    mid: 0xF97316,
-    outer: 0xDC2626,
-    ray: 0xFDE047,
-    fragment: 0x16A34A
+    mid: 0xFB923C,
+    outer: 0xF97316,
+    shock: 0xFFFFFF,
+    cherry: 0xEF4444,
+    cherryFill: 0xB91C1C,
+    cherryMid: 0xF87171,
+    banana: 0xFACC15,
+    melon: 0x4ADE80
   };
   const STYLE = {
-    coreK: 0.32,
-    midK: 0.68,
-    rayCount: 6,
-    fragCount: 6,
-    cherryStroke: 3,
-    melonStroke: 5
+    coreK: 0.22,
+    midK: 0.55
   };
 
   function num(v, def) {
@@ -130,12 +130,13 @@ window.FK = window.FK || {};
 
       this.setPosition(this.center.x, this.center.y);
       if (typeof this.setDepth === 'function') { this.setDepth(this.depth); }
+      if (scene && typeof scene.add.existing === 'function') { scene.add.existing(this); }
 
       if (canDraw) {
         this.gfx = scene.add.graphics();
-        // 由 update() 每帧重绘（半径随时间放大），这里先画一帧
+        if (typeof this.gfx.setDepth === 'function') { this.gfx.setDepth(this.depth); }
+        if (typeof this.gfx.setScrollFactor === 'function') { this.gfx.setScrollFactor(1); }
         this.drawCircle(0);
-        if (typeof this.add === 'function') { this.add(this.gfx); }
       }
 
       this.built = true;
@@ -175,53 +176,42 @@ window.FK = window.FK || {};
     }
 
     /**
-     * 重绘爆炸圆（半径随时间变化）
+     * 爆炸特效：火球从爆心扩到伤害半径，外圈就是爆炸范围。
+     * 画在世界坐标，不挂 Container，避免镜头下看不见。
      * @param {number} r 当前半径（px）
      */
     drawCircle(r) {
       if (!this.gfx) { return; }
       const g = this.gfx;
       g.clear();
+      if (r <= 0.5) { return; }
 
-      const melon = this.itemId === 'watermelon_bomb';
+      const cx = this.center.x;
+      const cy = this.center.y;
+      const id = this.itemId;
       const k = this.progress;
-      const fade = k < 0.55 ? 1 : Math.max(0, 1 - (k - 0.55) / 0.45);
+      const fade = k < 0.7 ? 1 : Math.max(0, 1 - (k - 0.7) / 0.3);
+      const maxR = this.radiusPx;
+      let ring = COLOR.stroke;
+      let fill = COLOR.outer;
+      let mid = COLOR.mid;
+      if (id === 'cherry_bomb') { ring = COLOR.cherry; fill = COLOR.cherryFill; mid = COLOR.cherryMid; }
+      else if (id === 'watermelon_bomb') { ring = COLOR.melon; fill = 0x16A34A; }
+      else if (id === 'banana_bomb') { ring = COLOR.banana; fill = 0xEAB308; }
 
-      g.fillStyle(COLOR.outer, 0.38 * fade);
-      g.fillCircle(0, 0, r);
-      g.fillStyle(COLOR.mid, 0.5 * fade);
-      g.fillCircle(0, 0, r * STYLE.midK);
-      g.fillStyle(COLOR.core, 0.72 * fade);
-      g.fillCircle(0, 0, r * STYLE.coreK);
-      g.fillStyle(COLOR.fillCore, 0.45 * fade);
-      g.fillCircle(0, 0, r * STYLE.coreK * 0.55);
+      g.fillStyle(fill, 0.38 * fade);
+      g.fillCircle(cx, cy, r);
+      g.fillStyle(mid, 0.32 * fade);
+      g.fillCircle(cx, cy, r * STYLE.midK);
+      g.fillStyle(COLOR.core, 0.82 * fade);
+      g.fillCircle(cx, cy, Math.max(10, r * STYLE.coreK));
 
-      const strokeW = melon ? STYLE.melonStroke : STYLE.cherryStroke;
-      g.lineStyle(strokeW, COLOR.stroke, 0.9 * fade);
-      g.strokeCircle(0, 0, r);
-      g.lineStyle(melon ? 4 : 2, COLOR.ring, 0.5 * fade);
-      g.strokeCircle(0, 0, r * 0.82);
-
-      g.lineStyle(2, COLOR.ray, 0.85 * fade);
-      const rays = STYLE.rayCount;
-      for (let i = 0; i < rays; i++) {
-        const a = (Math.PI * 2 * i) / rays + 0.2;
-        const inner = r * 0.18;
-        const outer = r * (melon ? 1.12 : 1.02);
-        g.beginPath();
-        g.moveTo(Math.cos(a) * inner, Math.sin(a) * inner);
-        g.lineTo(Math.cos(a) * outer, Math.sin(a) * outer);
-        g.strokePath();
-      }
-
-      if (melon) {
-        g.fillStyle(COLOR.fragment, 0.9 * fade);
-        for (let i = 0; i < STYLE.fragCount; i++) {
-          const a = (Math.PI * 2 * i) / STYLE.fragCount + 0.4;
-          const d = r * (0.55 + 0.45 * k);
-          g.fillCircle(Math.cos(a) * d, Math.sin(a) * d, 3.2);
-        }
-      }
+      g.lineStyle(7, ring, 0.98 * fade);
+      g.strokeCircle(cx, cy, r);
+      g.lineStyle(3, COLOR.shock, 0.85 * fade);
+      g.strokeCircle(cx, cy, Math.max(6, r - 8));
+      g.lineStyle(2, ring, 0.55 * fade);
+      g.strokeCircle(cx, cy, maxR);
     }
 
     /* ==================================================================
@@ -261,6 +251,7 @@ window.FK = window.FK || {};
       if (this.destroyed) { return; }
       this.destroyed = true;
       this.finished = true;
+      if (this.gfx && typeof this.gfx.destroy === 'function') { this.gfx.destroy(); }
       this.gfx = null;
       if (typeof super.destroy === 'function') { super.destroy(fromScene); }
     }

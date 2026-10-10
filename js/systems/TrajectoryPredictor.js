@@ -111,6 +111,14 @@ window.FK = window.FK || {};
     return best;
   }
 
+  /** 水果箱等放置障碍（预览可忽略，实飞仍走完整碰撞） */
+  function isObstacleRect(r) {
+    if (!r) { return false; }
+    if (r.material === 'crate' || r.kind === 'crate' || r.kind === 'obstacle') { return true; }
+    const id = (r.id != null) ? String(r.id) : '';
+    return id.indexOf('obstacle_') === 0;
+  }
+
   /**
    * 线段与 AABB 求交（slab 法）
    * @returns {{t:number,x:number,y:number}|null} 命中参数 t ∈ [0,1] 与命中点
@@ -284,7 +292,10 @@ window.FK = window.FK || {};
       const g = this.gravityY;
       const dt = this.stepSec;
       const maxSteps = opts.maxSteps ? Math.max(1, Math.round(opts.maxSteps)) : this.maxSteps;
-      const platforms = opts.platforms || this.platforms;
+      let platforms = opts.platforms || this.platforms;
+      if (opts.ignoreObstacles) {
+        platforms = (platforms || []).filter(function (r) { return !isObstacleRect(r); });
+      }
       const waterLevel = (Object.prototype.hasOwnProperty.call(opts, 'waterLevel'))
         ? opts.waterLevel : this.waterLevel;
       const bounds = (Object.prototype.hasOwnProperty.call(opts, 'bounds')) ? opts.bounds : this.bounds;
@@ -489,6 +500,7 @@ window.FK = window.FK || {};
   TrajectoryPredictor.stepIntegrate = stepIntegrate;
   TrajectoryPredictor.pointOnSegment = pointOnSegment;
   TrajectoryPredictor.resolveSegmentHit = resolveSegmentHit;
+  TrajectoryPredictor.isObstacleRect = isObstacleRect;
   /** 默认物理参数（与 gameConfig 一致，便于纯 JS 自检直接构造状态） */
   TrajectoryPredictor.DEFAULTS = Object.freeze({
     gravityY: 1500,

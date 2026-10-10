@@ -219,6 +219,7 @@ window.FK = window.FK || {};
 
     setDepth(obj, depth) {
       if (obj && typeof obj.setDepth === 'function') { obj.setDepth(depth); }
+      if (obj && typeof obj.setScrollFactor === 'function') { obj.setScrollFactor(0); }
       return obj;
     }
 
@@ -380,8 +381,8 @@ window.FK = window.FK || {};
 
     onPointerDown(pointer) {
       if (!this.visible || !pointer) { return false; }
-      const x = num(pointer.worldX, num(pointer.x, -1));
-      const y = num(pointer.worldY, num(pointer.y, -1));
+      const x = num(pointer.x, -1);
+      const y = num(pointer.y, -1);
       if (this.hitButton(x, y)) { return this.pressRestart(); }
       if (this.hitTitleButton(x, y)) { return this.pressTitle(); }
       return false;
@@ -389,8 +390,8 @@ window.FK = window.FK || {};
 
     onPointerMove(pointer) {
       if (!this.visible || !pointer) { return false; }
-      const x = num(pointer.worldX, num(pointer.x, -1));
-      const y = num(pointer.worldY, num(pointer.y, -1));
+      const x = num(pointer.x, -1);
+      const y = num(pointer.y, -1);
       const hover = this.hitButton(x, y);
       const tHover = this.hitTitleButton(x, y);
       if (hover === this.buttonHover && tHover === this.titleHover) { return false; }

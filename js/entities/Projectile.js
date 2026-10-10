@@ -46,7 +46,10 @@ window.FK = window.FK || {};
     crate: 0xB45309,
     crateDark: 0x78350F,
     crateGrain: 0x92400E,
-    crateHi: 0xD97706
+    crateHi: 0xD97706,
+    banana: 0xFACC15,
+    bananaDark: 0xCA8A04,
+    bananaTip: 0x78350F
   };
   const STYLE = {
     sparkAlphaMin: 0.6,
@@ -57,6 +60,36 @@ window.FK = window.FK || {};
 
   function num(v, def) {
     return (typeof v === 'number' && isFinite(v)) ? v : def;
+  }
+
+  function bounceOffHit(hit, vx, vy, rest) {
+    let nx = 0;
+    let ny = -1;
+    const r = hit && hit.target;
+    if (r && typeof r.x === 'number') {
+      const dl = Math.abs(hit.x - r.x);
+      const dr = Math.abs(hit.x - (r.x + r.width));
+      const dt = Math.abs(hit.y - r.y);
+      const db = Math.abs(hit.y - (r.y + r.height));
+      const m = Math.min(dl, dr, dt, db);
+      if (m === dl) { nx = -1; ny = 0; }
+      else if (m === dr) { nx = 1; ny = 0; }
+      else if (m === dt) { nx = 0; ny = -1; }
+      else { nx = 0; ny = 1; }
+    } else if (Math.abs(vx) >= Math.abs(vy)) {
+      nx = vx > 0 ? -1 : 1;
+      ny = 0;
+    } else {
+      nx = 0;
+      ny = vy > 0 ? -1 : 1;
+    }
+    const dot = vx * nx + vy * ny;
+    return {
+      vx: (vx - 2 * dot * nx) * rest,
+      vy: (vy - 2 * dot * ny) * rest,
+      nx: nx,
+      ny: ny
+    };
   }
 
   /**
@@ -144,6 +177,14 @@ window.FK = window.FK || {};
       this.fuseMs = (this.itemConfig && typeof this.itemConfig.fuseOnHitMs === 'number')
         ? this.itemConfig.fuseOnHitMs : 50;
 
+      const hops = (this.itemConfig && typeof this.itemConfig.bounceSettleHops === 'number')
+        ? this.itemConfig.bounceSettleHops : 2;
+      this.settleHopsLeft = Math.max(0, Math.round(hops));
+      this.settleHopMax = this.settleHopsLeft;
+      this.settling = false;
+      this.terrainBounces = 0;
+      this.lastSpeed = Math.sqrt(this.vel.x * this.vel.x + this.vel.y * this.vel.y);
+
       /** 飞行统计 */
       this.flightTimeMs = 0;
       this.stepCount = 0;
@@ -224,6 +265,25 @@ window.FK = window.FK || {};
         g.beginPath(); g.moveTo(-s / 2 + 4, -s / 2 + 4); g.lineTo(s / 2 - 4, s / 2 - 4); g.strokePath();
         g.lineStyle(2, COLOR.crateDark, 1);
         g.strokeRect(-s / 2, -s / 2, s, s);
+        return;
+      }
+
+      if (id === 'banana_bomb') {
+        g.fillStyle(COLOR.banana, 1);
+        g.fillCircle(-r * 0.35, r * 0.12, r * 0.72);
+        g.fillCircle(0, -r * 0.08, r * 0.78);
+        g.fillCircle(r * 0.38, r * 0.18, r * 0.7);
+        g.lineStyle(Math.max(2, r * 0.14), COLOR.bananaDark, 1);
+        g.beginPath();
+        g.moveTo(-r * 0.7, r * 0.15);
+        g.lineTo(-r * 0.1, -r * 0.55);
+        g.lineTo(r * 0.72, r * 0.22);
+        g.strokePath();
+        g.fillStyle(COLOR.bananaTip, 1);
+        g.fillCircle(-r * 0.78, r * 0.28, r * 0.16);
+        g.fillCircle(r * 0.8, r * 0.32, r * 0.14);
+        g.fillStyle(COLOR.highlight, 0.45);
+        g.fillCircle(-r * 0.1, -r * 0.28, r * 0.2);
         return;
       }
 
@@ -319,6 +379,7 @@ window.FK = window.FK || {};
       const dt = dtMs / 1000;
 
       if (dt > 0) {
+        this.lastSpeed = Math.sqrt(this.vel.x * this.vel.x + this.vel.y * this.vel.y);
         const state = { x: this.pos.x, y: this.pos.y, vx: this.vel.x, vy: this.vel.y, g: this.gravityY };
         const next = this.integrate(state, dt);
 
@@ -336,6 +397,10 @@ window.FK = window.FK || {};
         this.flightTimeMs += dtMs;
 
         if (hit) {
+          if (this.tryTerrainBounce(hit, next)) {
+            return null;
+          }
+          if (this.landed) { return this.landing; }
           this.landFrom({ x: hit.x, y: hit.y, hitType: hit.type, hitTarget: hit.target });
           return this.landing;
         }
@@ -362,6 +427,45 @@ window.FK = window.FK || {};
       // 理论上到不了这里（TrajectoryPredictor 一定先于本文件加载）；
       // 真到这一步说明工程结构被破坏，直接返回原状态而不是偷偷用另一套公式
       return { x: state.x, y: state.y, vy: state.vy };
+    }
+
+    /** 香蕉弹：平台弹跳；动能不足后先贴地弹两次再引爆 */
+    tryTerrainBounce(hit, next) {
+      const cfg = this.itemConfig;
+      if (!cfg || !cfg.bounceTerrain) { return false; }
+      if (!hit || hit.type !== 'platform') { return false; }
+
+      const rest = num(cfg.bounceRestitution, 0.85);
+      const bounced = bounceOffHit(hit, this.vel.x, next.vy, rest);
+      this.vel.x = bounced.vx;
+      this.vel.y = bounced.vy;
+      this.pos.x = hit.x + bounced.nx * 3;
+      this.pos.y = hit.y + bounced.ny * 3;
+      this.lastSpeed = Math.sqrt(this.vel.x * this.vel.x + this.vel.y * this.vel.y);
+
+      const speed = this.lastSpeed;
+      const minSp = num(cfg.bounceMinSpeed, 90);
+      const floorHit = bounced.ny < -0.4;
+      if (speed < minSp) { this.settling = true; }
+      if (this.settling && floorHit) {
+        if (this.settleHopsLeft > 0) {
+          const used = this.settleHopMax - this.settleHopsLeft;
+          const base = num(cfg.bounceSettleVy, 205);
+          const hop = base * (used === 0 ? 1 : 0.58);
+          this.vel.y = -Math.abs(hop);
+          this.vel.x *= 0.52;
+          this.settleHopsLeft -= 1;
+          this.terrainBounces = (this.terrainBounces || 0) + 1;
+          return true;
+        }
+        this.landFrom({ x: this.pos.x, y: this.pos.y, hitType: 'energy', hitTarget: hit.target });
+        return false;
+      }
+      if (this.settling && Math.abs(this.vel.x) < 36) {
+        this.vel.x = bounced.nx * 72;
+      }
+      this.terrainBounces = (this.terrainBounces || 0) + 1;
+      return true;
     }
 
     /** 地形碰撞：优先用注入的预测器（同一份世界数据），否则用构造时传入的世界快照 */
@@ -423,6 +527,11 @@ window.FK = window.FK || {};
 
     /** 当前世界坐标 { x, y }（像素） */
     getPosition() { return { x: this.pos.x, y: this.pos.y }; }
+
+    getExplodeDamage() {
+      const cfg = this.itemConfig || {};
+      return num(cfg.damage, 0);
+    }
 
     /** 当前速度 { vx, vy, vx? }：同时提供 vx/vy 与 x/y 两种键名，方便调用方 */
     getVelocity() { return { vx: this.vel.x, vy: this.vel.y, x: this.vel.x, y: this.vel.y }; }

@@ -1,7 +1,7 @@
 {
   "version": "0.2.0",
   "schema": "map",
-  "description": "地图配置。第 2 步填充 FruitKingArena（水果王竞技场），第 8 步开始构建地形与碰撞体；第 7.10 步新增 bounds.type（边界类型：当前 demo 地图为实体墙）。所有坐标均为地图单位 u（1 u = pxPerUnit 像素），原点在竞技场左上角，y 轴向下为正。",
+  "description": "地图配置。第 14 步起支持 maps 列表与标题页选图；skipTitle 默认 fruit_king_arena。坐标均为地图单位 u（1 u = pxPerUnit 像素），原点在竞技场左上角，y 轴向下为正。",
   "fields": {
     "id": "string 必填。地图唯一标识，必须与 js/registry/registerAll.js 中注册的 id 一致",
     "name": "string 必填。地图显示名（中文）",
@@ -91,5 +91,57 @@
         "y": 2.5
       }
     ]
-  }
+  },
+  "defaultMapId": "fruit_king_arena",
+  "maps": [
+    {
+      "id": "fruit_king_arena",
+      "name": "水果王竞技场",
+      "width": 30,
+      "height": 12,
+      "pxPerUnit": 48,
+      "platforms": [
+        { "id": "rock_high_l", "x": 0.5, "y": 3.0, "width": 7.0, "height": 1.2, "material": "rock" },
+        { "id": "rock_high_r", "x": 22.5, "y": 3.0, "width": 7.0, "height": 1.2, "material": "rock" },
+        { "id": "cookie_low_l", "x": 8.5, "y": 6.0, "width": 4.0, "height": 0.6, "material": "cookie" },
+        { "id": "cookie_low_r", "x": 17.5, "y": 6.0, "width": 4.0, "height": 0.6, "material": "cookie" },
+        { "id": "jelly_float", "x": 13.0, "y": 5.0, "width": 4.0, "height": 0.8, "material": "jelly" }
+      ],
+      "waterLevel": 9.5,
+      "bounds": { "type": "wall" },
+      "spawnPoints": [
+        { "team": "blue", "unitId": "fruit_king", "x": 2.0, "y": 2.5 },
+        { "team": "blue", "unitId": "apple_guard", "x": 5.5, "y": 2.5 },
+        { "team": "red", "unitId": "grape_soldier", "x": 24.5, "y": 2.5 },
+        { "team": "red", "unitId": "lemon_general", "x": 28.0, "y": 2.5 }
+      ]
+    },
+    {
+      "id": "jam_canyon",
+      "name": "果酱峡谷",
+      "width": 52,
+      "height": 18,
+      "pxPerUnit": 48,
+      "platforms": [
+        { "id": "jc_rock_l", "x": 0.4, "y": 4.2, "width": 9.0, "height": 1.3, "material": "rock" },
+        { "id": "jc_rock_r", "x": 42.6, "y": 4.2, "width": 9.0, "height": 1.3, "material": "rock" },
+        { "id": "jc_cookie_l", "x": 11.0, "y": 7.6, "width": 5.5, "height": 0.7, "material": "cookie" },
+        { "id": "jc_cookie_r", "x": 35.5, "y": 7.6, "width": 5.5, "height": 0.7, "material": "cookie" },
+        { "id": "jc_jelly_mid", "x": 22.0, "y": 6.0, "width": 8.0, "height": 0.9, "material": "jelly" },
+        { "id": "jc_cookie_low_l", "x": 16.5, "y": 10.8, "width": 6.0, "height": 0.65, "material": "cookie" },
+        { "id": "jc_cookie_low_r", "x": 29.5, "y": 10.8, "width": 6.0, "height": 0.65, "material": "cookie" },
+        { "id": "jc_rock_step_l", "x": 8.2, "y": 12.2, "width": 4.2, "height": 0.8, "material": "rock" },
+        { "id": "jc_rock_step_r", "x": 39.6, "y": 12.2, "width": 4.2, "height": 0.8, "material": "rock" },
+        { "id": "jc_jelly_low", "x": 23.5, "y": 13.0, "width": 5.0, "height": 0.7, "material": "jelly" }
+      ],
+      "waterLevel": 15.2,
+      "bounds": { "type": "wall" },
+      "spawnPoints": [
+        { "team": "blue", "unitId": "fruit_king", "x": 2.2, "y": 3.6 },
+        { "team": "blue", "unitId": "apple_guard", "x": 6.6, "y": 3.6 },
+        { "team": "red", "unitId": "grape_soldier", "x": 45.4, "y": 3.6 },
+        { "team": "red", "unitId": "lemon_general", "x": 49.6, "y": 3.6 }
+      ]
+    }
+  ]
 }

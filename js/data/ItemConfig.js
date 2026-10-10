@@ -141,12 +141,47 @@ window.FK = window.FK || {};
       /* ---------- 第 7.8 步新增：道具冷却 ---------- */
 
       /**
-       * 冷却回合数（turn）：第 N 个 turn 使用后，第 N+1 个 turn 不可再用，
-       * 第 N+2 个 turn 恢复可用（水果箱 = 1）。缺省 0 = 无冷却。
+       * 冷却回合数：使用后还要再过几个**自己的**行动回合才能再用
+       * （水果箱 = 1：下一次自己行动仍冷却，再下一次才恢复）。缺省 0 = 无冷却。
        * 计时由 FK.ItemCooldown 统一维护，本字段只描述规则。
        */
       this.cooldownTurns = U.readNumber(raw, 'cooldownTurns', 0, {
         label: 'cooldownTurns', min: 0, errors: this._errors
+      });
+
+      /** 第 14 步：撞地形是否弹跳（香蕉弹） */
+      this.bounceTerrain = !!raw.bounceTerrain;
+      this.bounceRestitution = U.readNumber(raw, 'bounceRestitution', 0.85, {
+        label: 'bounceRestitution', min: 0, max: 1, errors: this._errors
+      });
+      this.bounceMinSpeed = U.readNumber(raw, 'bounceMinSpeed', 90, {
+        label: 'bounceMinSpeed', min: 0, errors: this._errors
+      });
+      this.bounceSettleHops = U.readNumber(raw, 'bounceSettleHops', 2, {
+        label: 'bounceSettleHops', min: 0, errors: this._errors
+      });
+      this.bounceSettleVy = U.readNumber(raw, 'bounceSettleVy', 205, {
+        label: 'bounceSettleVy', min: 0, errors: this._errors
+      });
+      this.damageSlow = U.readNumber(raw, 'damageSlow', this.damage, {
+        label: 'damageSlow', min: 0, errors: this._errors
+      });
+      this.damageFast = U.readNumber(raw, 'damageFast', this.damage, {
+        label: 'damageFast', min: 0, errors: this._errors
+      });
+      this.damageHighBounce = U.readNumber(raw, 'damageHighBounce', this.damage, {
+        label: 'damageHighBounce', min: 0, errors: this._errors
+      });
+      this.bounceDamageCount = U.readNumber(raw, 'bounceDamageCount', 2, {
+        label: 'bounceDamageCount', min: 0, errors: this._errors
+      });
+      this.bounceFastSpeed = U.readNumber(raw, 'bounceFastSpeed', 180, {
+        label: 'bounceFastSpeed', min: 0, errors: this._errors
+      });
+      this.manualDetonate = !!raw.manualDetonate;
+      this.cullOnBounds = !!raw.cullOnBounds;
+      this.speedScale = U.readNumber(raw, 'speedScale', 1, {
+        label: 'speedScale', min: 0.05, max: 2, errors: this._errors
       });
 
       this.sprite = U.readString(raw, 'sprite', '', {
@@ -194,6 +229,19 @@ window.FK = window.FK || {};
         explodeAnimMs: 300,
         crateSizeUnits: 1.5,
         cooldownTurns: 0,
+        bounceTerrain: false,
+        bounceRestitution: 0.85,
+        bounceMinSpeed: 90,
+        bounceSettleHops: 2,
+        bounceSettleVy: 205,
+        damageSlow: 0,
+        damageFast: 0,
+        damageHighBounce: 0,
+        bounceDamageCount: 2,
+        bounceFastSpeed: 180,
+        manualDetonate: false,
+        cullOnBounds: false,
+        speedScale: 1,
         desc: '',
         sprite: ''
       };
@@ -254,6 +302,19 @@ window.FK = window.FK || {};
         explodeAnimMs: this.explodeAnimMs,
         crateSizeUnits: this.crateSizeUnits,
         cooldownTurns: this.cooldownTurns,
+        bounceTerrain: this.bounceTerrain,
+        bounceRestitution: this.bounceRestitution,
+        bounceMinSpeed: this.bounceMinSpeed,
+        bounceSettleHops: this.bounceSettleHops,
+        bounceSettleVy: this.bounceSettleVy,
+        damageSlow: this.damageSlow,
+        damageFast: this.damageFast,
+        damageHighBounce: this.damageHighBounce,
+        bounceDamageCount: this.bounceDamageCount,
+        bounceFastSpeed: this.bounceFastSpeed,
+        manualDetonate: this.manualDetonate,
+        cullOnBounds: this.cullOnBounds,
+        speedScale: this.speedScale,
         desc: this.desc,
         sprite: this.sprite
       };

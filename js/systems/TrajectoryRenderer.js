@@ -72,6 +72,8 @@ window.FK = window.FK || {};
 
       this.lineGfx = scene.add.graphics().setDepth(this.depth);
       this.ringGfx = scene.add.graphics().setDepth(this.depth);
+      if (typeof this.lineGfx.setSize === 'function') { this.lineGfx.setSize(8192, 8192); }
+      if (typeof this.ringGfx.setSize === 'function') { this.ringGfx.setSize(8192, 8192); }
 
       /** 最近一次绘制的信息（调试 / 自检用） */
       this.lastDraw = {
@@ -122,15 +124,32 @@ window.FK = window.FK || {};
         this.clear();
         return;
       }
+      this.syncViewport();
       this.drawTrajectory(result.points);
-      this.drawLandingRing(result);
+      if (this.ringGfx) { this.ringGfx.clear(); }
 
       this.lastDraw.visible = true;
       this.lastDraw.totalPoints = result.points.length;
       this.lastDraw.landing = result.landing;
     }
 
-    /** 世界坐标是否在画布可视范围内（含余量） */
+    /** 按镜头世界矩形裁剪（大地图滚动后不能再用 0～画布宽） */
+    syncViewport() {
+      const cam = this.scene && this.scene.cameras ? this.scene.cameras.main : null;
+      const m = 80;
+      if (cam && cam.worldView) {
+        const r = cam.worldView;
+        this.viewport.left = r.x;
+        this.viewport.top = r.y;
+        this.viewport.right = r.x + r.width;
+        this.viewport.bottom = r.y + r.height;
+        this.viewport.margin = m;
+        return;
+      }
+      this.viewport.margin = m;
+    }
+
+    /** 世界坐标是否在镜头可视范围内（含余量） */
     isVisiblePoint(x, y) {
       const v = this.viewport;
       const m = num(v.margin, 0);

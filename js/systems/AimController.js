@@ -78,6 +78,7 @@ window.FK = window.FK || {};
     const minPowerRatio = clamp(num(input.minPowerRatio, 0.15), 0, 1);
     const maxSpeed = num(input.maxSpeed, 1200);
     const itemRange = num(input.itemRange, 1);
+    const speedScale = num(input.speedScale, 1);
     const angleLimitDeg = num(input.angleLimitDeg, 180);
 
     const dist = Math.sqrt(dragX * dragX + dragY * dragY);
@@ -103,7 +104,7 @@ window.FK = window.FK || {};
 
     // 初速度：满力速度 × 道具系数 × 力度（带下限保护，避免原地掉落）
     const effectivePower = Math.max(powerRatio, minPowerRatio);
-    const speed = maxSpeed * itemRange * effectivePower;
+    const speed = maxSpeed * itemRange * effectivePower * Math.max(0.05, speedScale);
     const rad = angleDeg * Math.PI / 180;
 
     return {
@@ -296,8 +297,11 @@ window.FK = window.FK || {};
       if (this.isInputBlocked()) { return false; }
       const team = (this.turnManager && typeof this.turnManager.getCurrentTeam === 'function')
         ? this.turnManager.getCurrentTeam() : null;
-      if (team === null) { return true; }
-      return unit.getTeam() === team;
+      if (team !== null && unit.getTeam() !== team) { return false; }
+      const lock = (this.unitSelector && typeof this.unitSelector.getActionLockUnit === 'function')
+        ? this.unitSelector.getActionLockUnit() : null;
+      if (lock && unit !== lock) { return false; }
+      return true;
     }
 
     /**
@@ -314,6 +318,7 @@ window.FK = window.FK || {};
     /** 玩家指针锁定：终态或 AI 回合（不影响 beginThrow 程序入口） */
     isPlayerInputBlocked() {
       if (this.isInputBlocked()) { return true; }
+      if (FK.Config && typeof FK.Config.isPaused === 'function' && FK.Config.isPaused()) { return true; }
       return !!(FK.Config && typeof FK.Config.isAiTurn === 'function' &&
         FK.Config.isAiTurn(this.turnManager));
     }
@@ -402,6 +407,7 @@ window.FK = window.FK || {};
         minPowerRatio: this.minPowerRatio,
         maxSpeed: this.maxSpeed,
         itemRange: this.getItemRange(),
+        speedScale: this.getItemSpeedScale(),
         angleLimitDeg: this.angleLimitDeg
       });
       shot.dragX = dragX;
@@ -419,7 +425,18 @@ window.FK = window.FK || {};
       let result = null;
       if (this.predictor) {
         const start = this.getLaunchPoint();
-        result = this.predictor.predict(start.x, start.y, shot.vx, shot.vy);
+        const A = (FK.Config && FK.Config.AIM) ? FK.Config.AIM : {};
+        const base = (typeof A.previewMaxSteps === 'number') ? A.previewMaxSteps : 52;
+        const range = Math.max(0.2, this.getItemRange());
+        const power = Math.max(0.12, num(shot.powerRatio, 0));
+        const previewSteps = Math.max(14, Math.min(96, Math.round(base * range * (0.42 + 0.58 * power))));
+        result = this.predictor.predict(start.x, start.y, shot.vx, shot.vy, {
+          platforms: [],
+          waterLevel: null,
+          bounds: null,
+          ignoreObstacles: true,
+          maxSteps: previewSteps
+        });
         this.trajectory = result;
       }
 
@@ -637,6 +654,12 @@ window.FK = window.FK || {};
     /** 当前道具的力度系数（ItemConfig.range） */
     getItemRange() {
       return (this.item && typeof this.item.range === 'number') ? this.item.range : 1;
+    }
+
+    /** 当前道具的飞行速度系数（ItemConfig.speedScale，缺省 1） */
+    getItemSpeedScale() {
+      const s = this.item && this.item.speedScale;
+      return (typeof s === 'number' && s > 0) ? s : 1;
     }
 
     /** 当前道具的爆炸半径（地图单位；未设置道具时为 0） */

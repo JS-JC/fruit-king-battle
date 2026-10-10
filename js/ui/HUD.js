@@ -30,8 +30,8 @@ window.FK = window.FK || {};
   function copyOf() {
     const HUD = (FK.Config && FK.Config.HUD) ? FK.Config.HUD : {};
     return Object.assign({
-      allyAct: '己方行动',
-      enemyAct: '敌方行动',
+      allyAct: '你的回合（蓝色方可操作）',
+      enemyAct: '敌方回合（红色方 AI）',
       turnOf: '第 {n} 回合',
       turnCap: '回合 {n} / {max}',
       aiThinking: '敌方思考中…'
@@ -87,7 +87,21 @@ window.FK = window.FK || {};
       this.timer.build();
       this.aim = new FK.AimIndicator(this.scene, { x: 100, y: 732, depth: 48 });
       this.aim.build();
+      this.pinToCamera();
       this.applyDebugVisibility();
+      return this;
+    }
+
+    pinToCamera() {
+      const pin = function (o) {
+        if (o && typeof o.setScrollFactor === 'function') { o.setScrollFactor(0); }
+      };
+      (this.disposables || []).forEach(pin);
+      pin(this.toastContainer);
+      if (this.timer && this.timer.disposables) { this.timer.disposables.forEach(pin); }
+      if (this.aim && this.aim.disposables) { this.aim.disposables.forEach(pin); }
+      const h = this.refs || {};
+      Object.keys(h).forEach(function (k) { pin(h[k]); });
       return this;
     }
 
@@ -172,7 +186,7 @@ window.FK = window.FK || {};
       this.disposables.push(g);
 
       h.hintText = scene.add.text(panelX + 20, panelY + 8,
-        '悬停高亮 · 点击选中 · 拖拽选中单位瞄准 · 点第 4 格「移动」跳跃 · 拖回 / 右键 / ESC 取消', {
+        '悬停高亮 · 点击选中 · 拖拽瞄准 · 第 5 格移动 · 香蕉弹飞行中左键引爆 · 拖回 / 右键 / ESC 取消', {
           fontFamily: '"Microsoft YaHei", sans-serif', fontSize: '14px', color: COLOR.label
         }).setOrigin(0, 0).setDepth(48);
       h.fpsText = scene.add.text(panelX + 20, panelY + 32, 'FPS --', {

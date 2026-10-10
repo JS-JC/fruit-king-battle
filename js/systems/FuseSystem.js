@@ -93,6 +93,13 @@ window.FK = window.FK || {};
       return !!(landing && landing.hitType === 'water');
     }
 
+    /** 香蕉弹飞出边界：消失、不爆炸 */
+    shouldCullSilent(proj, landing) {
+      const cfg = proj && proj.itemConfig;
+      if (!cfg || !cfg.cullOnBounds) { return false; }
+      return !!(landing && landing.hitType === 'bounds');
+    }
+
     /**
      * 落地处理（由 ProjectileController.onLanded 调用）
      * @param {FK.Projectile} proj 已落地的投掷物
@@ -104,6 +111,10 @@ window.FK = window.FK || {};
 
       // ---- ① 落水：直接销毁，不触发爆炸（第 7 步规则） ----
       if (this.destroyOnWater && this.isWaterHit(landing)) {
+        this.sink(proj, landing);
+        return { action: 'sunk', fuseMs: 0 };
+      }
+      if (this.shouldCullSilent(proj, landing)) {
         this.sink(proj, landing);
         return { action: 'sunk', fuseMs: 0 };
       }

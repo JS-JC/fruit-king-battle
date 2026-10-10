@@ -119,6 +119,8 @@ window.FK.Configs = window.FK.Configs || { units: [], items: [], map: null, turn
       units: normalizeList(raw.units, 'units'),
       items: normalizeList(raw.items, 'items'),
       map: normalizeMap(raw.map),
+      maps: normalizeMapsList(raw.map),
+      defaultMapId: readDefaultMapId(raw.map),
       turn: normalizeTurn(raw.turn),
       meta: {
         sources: Object.assign({}, _sources),
@@ -233,11 +235,12 @@ window.FK.Configs = window.FK.Configs || { units: [], items: [], map: null, turn
   function buildTypedConfigs(errors) {
     const units = [];
     const items = [];
+    const maps = [];
     let map = null;
 
     if (!FK.UnitConfig || !FK.ItemConfig || !FK.MapConfig) {
       errors.push('配置数据结构未加载：请确认 js/data/UnitConfig.js、ItemConfig.js、MapConfig.js 已在 index.html 中引入');
-      FK.Configs = { units: units, items: items, map: map, turn: FK.Data.turn };
+      FK.Configs = { units: units, items: items, map: map, maps: maps, turn: FK.Data.turn };
       return FK.Configs;
     }
 
@@ -251,15 +254,40 @@ window.FK.Configs = window.FK.Configs || { units: [], items: [], map: null, turn
       catch (e) { errors.push('items[' + i + '] ' + e.message); }
     });
 
-    if (FK.Data.map && Object.keys(FK.Data.map).length > 0) {
-      try { map = FK.MapConfig.fromJSON(FK.Data.map); }
-      catch (e) { errors.push('map ' + e.message); }
-    } else {
+    const rawMaps = (FK.Data.maps && FK.Data.maps.length) ? FK.Data.maps : (FK.Data.map ? [FK.Data.map] : []);
+    rawMaps.forEach(function (raw, i) {
+      try { maps.push(FK.MapConfig.fromJSON(raw)); }
+      catch (e) { errors.push('maps[' + i + '] ' + e.message); }
+    });
+    if (maps.length === 0) {
       errors.push('data/map.json 中没有地图配置，第 8 步将无地图可用');
+    } else {
+      map = pickTypedMap(maps, FK.Data.defaultMapId);
     }
 
-    FK.Configs = { units: units, items: items, map: map, turn: FK.Data.turn };
+    FK.Configs = { units: units, items: items, map: map, maps: maps, turn: FK.Data.turn };
     return FK.Configs;
+  }
+
+  function pickTypedMap(maps, id) {
+    if (!maps || !maps.length) { return null; }
+    if (id) {
+      for (let i = 0; i < maps.length; i++) {
+        if (maps[i].id === id) { return maps[i]; }
+      }
+    }
+    return maps[0];
+  }
+
+  /** 标题页选图：切换当前 FK.Configs.map（skipTitle 保持默认竞技场） */
+  function selectMap(id) {
+    const maps = (FK.Configs && FK.Configs.maps) || [];
+    const next = pickTypedMap(maps, id);
+    if (next) {
+      FK.Configs.map = next;
+      if (FK.Data) { FK.Data.map = next.raw || FK.Data.map; }
+    }
+    return FK.Configs ? FK.Configs.map : null;
   }
 
   /** 把 { xxx: [...] } 或 [...] 统一成数组，解析失败返回空数组并告警 */
@@ -273,9 +301,42 @@ window.FK.Configs = window.FK.Configs || { units: [], items: [], map: null, turn
 
   /** 把 map 配置统一成对象，解析失败返回空对象 */
   function normalizeMap(rawValue) {
+    const list = normalizeMapsList(rawValue);
+    if (list.length) {
+      const id = readDefaultMapId(rawValue);
+      for (let i = 0; i < list.length; i++) {
+        if (list[i] && list[i].id === id) { return list[i]; }
+      }
+      return list[0];
+    }
     if (!rawValue || typeof rawValue !== 'object') { return {}; }
     if (rawValue.map && typeof rawValue.map === 'object') { return rawValue.map; }
     return rawValue;
+  }
+
+  function normalizeMapsList(rawValue) {
+    if (!rawValue || typeof rawValue !== 'object') { return []; }
+    const out = [];
+    const seen = {};
+    const push = function (m) {
+      if (!m || typeof m !== 'object' || !m.id || seen[m.id]) { return; }
+      seen[m.id] = true;
+      out.push(m);
+    };
+    if (Array.isArray(rawValue.maps)) {
+      rawValue.maps.forEach(push);
+    }
+    if (rawValue.map && typeof rawValue.map === 'object') { push(rawValue.map); }
+    if (!rawValue.maps && !rawValue.map && rawValue.id) { push(rawValue); }
+    return out;
+  }
+
+  function readDefaultMapId(rawValue) {
+    if (!rawValue || typeof rawValue !== 'object') { return 'fruit_king_arena'; }
+    if (rawValue.defaultMapId) { return String(rawValue.defaultMapId); }
+    if (rawValue.map && rawValue.map.id) { return String(rawValue.map.id); }
+    const list = normalizeMapsList(rawValue);
+    return (list[0] && list[0].id) ? list[0].id : 'fruit_king_arena';
   }
 
   /** 统一告警出口（避免直接依赖 Logger，第 2 步会接入完整日志） */
@@ -291,6 +352,7 @@ window.FK.Configs = window.FK.Configs || { units: [], items: [], map: null, turn
     const t = d.turn || {};
     return '[Data] units=' + d.units.length +
       ' items=' + d.items.length +
+      ' maps=' + (d.maps ? d.maps.length : 0) +
       ' map=' + (d.map && d.map.id ? d.map.id : '(未配置)') +
       ' turn=' + (t.turnTime || '?') + 'ms/' + ((t.teamOrder || []).join('→') || '?') +
       ' protocol=' + (d.meta ? d.meta.protocol : '?') +
@@ -304,13 +366,14 @@ window.FK.Configs = window.FK.Configs || { units: [], items: [], map: null, turn
 
   /** 类型化配置（第 2 步新增），未解析时返回空结构 */
   function configs() {
-    return FK.Configs || { units: [], items: [], map: null };
+    return FK.Configs || { units: [], items: [], map: null, maps: [] };
   }
 
   FK.ConfigLoader = {
     isFileProtocol: isFileProtocol,
     queueLoads: queueLoads,
     resolve: resolve,
+    selectMap: selectMap,
     summary: summary,
     sources: sources,
     configs: configs

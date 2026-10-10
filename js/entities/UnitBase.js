@@ -35,8 +35,8 @@ window.FK = window.FK || {};
 
   /** 阵营配色：新增阵营只需在这里加一项（配合 turn.json 的 teamOrder） */
   const TEAM_COLORS = {
-    blue: { fill: 0x3B82F6, light: 0x93C5FD, accent: 0xFDE047, label: '蓝色方' },
-    red: { fill: 0xEF4444, light: 0xFCA5A5, accent: 0xFDE047, label: '红色方' }
+    blue: { fill: 0x2563EB, light: 0x93C5FD, accent: 0xFDE047, label: '蓝色方', css: '#93C5FD' },
+    red: { fill: 0xDC2626, light: 0xFCA5A5, accent: 0xFDE047, label: '红色方', css: '#FCA5A5' }
   };
 
   /** 单位几何常量（单位制：1 u = 48 px） */
@@ -451,7 +451,7 @@ window.FK = window.FK || {};
       const stepSec = (typeof A.stepSec === 'number') ? A.stepSec : 1 / 60;
       const stepMs = stepSec * 1000;
       this.moveAccMs = (this.moveAccMs || 0) + dt;
-      if (this.moveAccMs > stepMs * 5) { this.moveAccMs = stepMs * 5; }
+      if (this.moveAccMs > stepMs * 8) { this.moveAccMs = stepMs * 8; }
 
       const g = (FK.Config && FK.Config.PHYSICS) ? FK.Config.PHYSICS.gravityY : 1500;
       const hw = (typeof this.getCollisionRadius === 'function') ? this.getCollisionRadius() : RADIUS;
@@ -464,11 +464,17 @@ window.FK = window.FK || {};
           : {};
 
         if (P && typeof P.stepFlightSlice === 'function') {
+          const M = (FK.Config && FK.Config.MOVE) ? FK.Config.MOVE : {};
           const r = P.stepFlightSlice({
             x: this.x, y: this.y, vx: this.moveVx, vy: this.moveVy,
             g: g, halfWidth: hw,
             priorBounceCount: this.moveBounces || 0
-          }, stepSec, world);
+          }, stepSec, world, {
+            restitution: (typeof M.restitution === 'number') ? M.restitution : 0.58,
+            restitutionDecay: (typeof M.restitutionDecay === 'number') ? M.restitutionDecay : 0.78,
+            minBounceSpeed: (typeof M.minBounceSpeed === 'number') ? M.minBounceSpeed : 28,
+            maxBounceCount: (typeof M.maxBounces === 'number') ? M.maxBounces : 8
+          });
           this.x = r.x;
           this.y = r.y;
           this.moveVx = r.vx;
@@ -476,7 +482,6 @@ window.FK = window.FK || {};
           if (r.bounced) {
             this.moveBounces = (this.moveBounces || 0) + (r.bounceCount || 1);
             this.lastMoveBounce = { count: r.bounceCount || 1, hits: (r.hits || []).slice(), vx: this.moveVx };
-            this.flashHit();
           }
         } else {
           const next = this.integrateMoveStep(stepSec);
@@ -624,6 +629,12 @@ window.FK = window.FK || {};
     /** 组装全部子对象 */
     buildVisuals() {
       const palette = this.getTeamPalette();
+      const ally = this.isPlayerControlled();
+
+      // ---- 常驻阵营圈：蓝=你能操控，红=敌方 ----
+      this.teamRing = this.scene.add.graphics();
+      this.teamRing.lineStyle(4, palette.fill, 1);
+      this.teamRing.strokeCircle(0, 0, RADIUS + 3);
 
       // ---- 悬停描边 ----
       this.hoverRing = this.scene.add.graphics();
@@ -631,11 +642,8 @@ window.FK = window.FK || {};
       this.hoverRing.strokeCircle(0, 0, HOVER_RING_R);
       this.hoverRing.setVisible(false);
 
-      // ---- 选中描边 ----
-      this.selectRing = this.scene.add.graphics();
-      this.selectRing.lineStyle(4, palette.accent, 1);
-      this.selectRing.strokeCircle(0, 0, SELECT_RING_R);
-      this.selectRing.setVisible(false);
+      // 选中不再叠第二圈，只脉冲阵营圈
+      this.selectRing = null;
 
       // ---- 美术容器（悬停放大只影响这里，不影响血条与描边） ----
       this.art = this.scene.add.container(0, 0);
@@ -662,7 +670,18 @@ window.FK = window.FK || {};
       drawDashedCircle(this.aimRing, AIM_RING_R, 16, 0.45);
       this.aimRing.setVisible(false);
 
-      this.add([this.hoverRing, this.selectRing, this.aimRing, this.art, this.hpBg, this.hpFill]);
+      this.teamTag = this.scene.add.text(0, HP_BAR.y - 14, ally ? '己方' : '敌方', {
+        fontFamily: '"Microsoft YaHei", sans-serif',
+        fontSize: '13px',
+        fontStyle: 'bold',
+        color: palette.css || (ally ? '#93C5FD' : '#FCA5A5'),
+        stroke: '#0B1220',
+        strokeThickness: 5
+      });
+      if (typeof this.teamTag.setOrigin === 'function') { this.teamTag.setOrigin(0.5, 1); }
+
+      this.add([this.teamRing, this.hoverRing, this.aimRing, this.art,
+        this.hpBg, this.hpFill, this.teamTag]);
     }
 
     /**
@@ -686,19 +705,27 @@ window.FK = window.FK || {};
       return TEAM_COLORS[this.team] || TEAM_COLORS.blue;
     }
 
-    /** 重绘血条（红底 + 绿条，长度随血量变化） */
+    /** 是否为玩家可操控阵营（默认蓝色方） */
+    isPlayerControlled() {
+      const pt = (FK.Config && FK.Config.VICTORY && FK.Config.VICTORY.playerTeam)
+        ? FK.Config.VICTORY.playerTeam : 'blue';
+      return this.team === pt;
+    }
+
+    /** 重绘血条（阵营色底框 + 绿条，长度随血量变化） */
     redrawHpBar() {
       if (!this.hpBg || !this.hpFill) { return; }
 
       const w = HP_BAR.w;
       const h = HP_BAR.h;
       const y = HP_BAR.y;
+      const palette = this.getTeamPalette();
 
       this.hpBg.clear();
-      this.hpBg.fillStyle(0x7F1D1D, 0.95);                 // 红底
-      this.hpBg.fillRoundedRect(-w / 2 - 1, y - 1, w + 2, h + 2, 3);
-      this.hpBg.lineStyle(1, 0x0F172A, 0.85);
-      this.hpBg.strokeRoundedRect(-w / 2 - 1, y - 1, w + 2, h + 2, 3);
+      this.hpBg.fillStyle(0x0B1220, 0.92);
+      this.hpBg.fillRoundedRect(-w / 2 - 2, y - 2, w + 4, h + 4, 3);
+      this.hpBg.lineStyle(2, palette.fill, 1);
+      this.hpBg.strokeRoundedRect(-w / 2 - 2, y - 2, w + 4, h + 4, 3);
 
       const ratio = this.getHpRatio();
       this.hpFill.clear();
@@ -738,15 +765,13 @@ window.FK = window.FK || {};
     setSelected(v) {
       this.selected = !!v;
 
-      if (this.selectRing) {
-        this.selectRing.setVisible(this.selected);
-        this.selectRing.setAlpha(1);
-      }
-      if (this.selected && this.scene && this.scene.tweens && this.selectRing) {
+      const pulseTarget = this.teamRing || this.selectRing;
+      if (this.selected && this.scene && this.scene.tweens && pulseTarget) {
         if (this.pulseTween) { this.pulseTween.stop(); }
+        pulseTarget.setAlpha(1);
         this.pulseTween = this.scene.tweens.add({
-          targets: this.selectRing,
-          alpha: { from: 1, to: 0.35 },
+          targets: pulseTarget,
+          alpha: { from: 1, to: 0.45 },
           duration: 620,
           yoyo: true,
           repeat: -1
@@ -754,6 +779,7 @@ window.FK = window.FK || {};
       } else if (this.pulseTween) {
         this.pulseTween.stop();
         this.pulseTween = null;
+        if (pulseTarget) { pulseTarget.setAlpha(1); }
       }
       // 选中时隐藏悬停描边，避免两个圈重叠
       if (this.hoverRing) { this.hoverRing.setVisible(this.hovered && !this.selected); }
@@ -1214,12 +1240,15 @@ window.FK = window.FK || {};
      */
     clampToArena() {
       if (!FK.Config || !FK.Config.ARENA) { return; }
+      const b = (typeof FK.Config.mapBoundsPx === 'function')
+        ? FK.Config.mapBoundsPx()
+        : null;
       const A = FK.Config.ARENA;
       const ppx = FK.Config.PX_PER_UNIT;
-      const minX = A.offsetX;
-      const maxX = A.offsetX + A.widthUnits * ppx;
-      const minY = A.offsetY;
-      const maxY = A.offsetY + A.heightUnits * ppx;
+      const minX = b ? b.left : A.offsetX;
+      const maxX = b ? b.right : (A.offsetX + A.widthUnits * ppx);
+      const minY = b ? b.top : A.offsetY;
+      const maxY = b ? b.bottom : (A.offsetY + A.heightUnits * ppx);
       // 移动中不横向钳制速度（弹性弹回优先）；位置仍然钳制，单位不会跑出世界
       const keepVx = !!this.moving;
 

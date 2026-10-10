@@ -72,9 +72,12 @@ window.FK = window.FK || {};
         summary.errors.push('[RegisterAll] data/items.json 中的道具 "' + it.id + '" 没有对应的模块工厂');
       }
     });
-    if (configs.map && configs.map.id && !FK.MapRegistry.has(configs.map.id)) {
-      summary.errors.push('[RegisterAll] data/map.json 中的地图 "' + configs.map.id + '" 没有对应的模块工厂');
-    }
+    const mapList = (configs.maps && configs.maps.length) ? configs.maps : (configs.map ? [configs.map] : []);
+    mapList.forEach(function (m) {
+      if (m && m.id && !FK.MapRegistry.has(m.id)) {
+        summary.errors.push('[RegisterAll] data/map.json 中的地图 "' + m.id + '" 没有对应的模块工厂');
+      }
+    });
 
     FK.UnitRegistry.list().forEach(function (id) {
       const found = (configs.units || []).some(function (u) { return u.id === id; });
@@ -88,8 +91,12 @@ window.FK = window.FK || {};
         summary.warnings.push('[RegisterAll] 道具模块 "' + id + '" 已注册，但 data/items.json 中没有对应配置');
       }
     });
+    const mapIds = {};
+    ((configs.maps && configs.maps.length) ? configs.maps : (configs.map ? [configs.map] : [])).forEach(function (m) {
+      if (m && m.id) { mapIds[m.id] = true; }
+    });
     FK.MapRegistry.list().forEach(function (id) {
-      if (!configs.map || configs.map.id !== id) {
+      if (!mapIds[id]) {
         summary.warnings.push('[RegisterAll] 地图模块 "' + id + '" 已注册，但 data/map.json 中没有对应配置');
       }
     });
@@ -121,10 +128,12 @@ window.FK = window.FK || {};
     /* ---------------- 道具模块 ---------------- */
     reg('item', FK.ItemRegistry, 'cherry_bomb',     pick('item', 'cherry_bomb'),     summary.items, summary.errors);
     reg('item', FK.ItemRegistry, 'watermelon_bomb', pick('item', 'watermelon_bomb'), summary.items, summary.errors);
+    reg('item', FK.ItemRegistry, 'banana_bomb',     pick('item', 'banana_bomb'),     summary.items, summary.errors);
     reg('item', FK.ItemRegistry, 'fruit_crate',     pick('item', 'fruit_crate'),     summary.items, summary.errors);
 
     /* ---------------- 地图模块 ---------------- */
     reg('map', FK.MapRegistry, 'fruit_king_arena', pick('map', 'fruit_king_arena'), summary.maps, summary.errors);
+    reg('map', FK.MapRegistry, 'jam_canyon',      pick('map', 'jam_canyon'),      summary.maps, summary.errors);
 
     /* ---------------- 交叉校验 ---------------- */
     crossCheck(summary);
